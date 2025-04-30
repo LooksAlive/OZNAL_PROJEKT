@@ -23,6 +23,7 @@ library(patchwork) # combining plots
 library(lmtest) # Breusch-Pagan test for homoscedasticity
 library(car)    # Levene's test for homoscedasticit
 library(latexpdf)
+library(rsample)  
 
 
 getwd()
@@ -67,11 +68,11 @@ prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
 # quick z-score (measures exactly how many standard deviations above or below the mean a data point) sweep for the continuous variables
 num_cols <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
 
-z_outliers <- sapply(num_cols, function(v){
+outliers <- sapply(num_cols, function(v){
   sum(abs(scale(data[[v]])) > 4)   # count rows beyond ±4 SD
 })
 
-print(z_outliers[z_outliers > 0])
+print(outliers[outliers > 0])
 # Returns an empty named integer(0) -> no extreme numeric outliers
 
 # Power check - events-per-variable (EPV) for logistic
@@ -231,13 +232,10 @@ cat("\nKey stats → EPV =", epv,
 # -Would add no value beyond GLM.
 
 # Planned modeling path
-primary_model <- "Logistic GLM"     # for inference / H1 test
-secondary_model <- "Decision Tree"    # benchmark with explanations
-exploratory_model <- "Random Forest"    # optional accuracy check
+# primary_model <- Logistic GLM: for inference / H1 test
+# secondary_model <- Decision Tree: benchmark with explanations
+# exploratory_model <- Random Forest: optional accuracy check
 
-cat("\nChosen primary model:", primary_model,
-    "\nChosen benchmark:", secondary_model,
-    "\nExploratory only:", exploratory_model,)
 
 
 # Verify that Age, MMSE and FunctionalAssessment are approximately linearly related to the log-odds of Alzheimer’s (GLM assumption)
@@ -281,6 +279,36 @@ for(v in pred_vars) print(emp_logit_plot(data, v))
 
 # FunctionalAssessment
 #  –Smooth monotonic decline but still curved – mild non-linearity.
+
+
+
+################################################################################
+############################# 5. Data Spending #################################
+################################################################################
+# We pick one yechnique that: 
+#  -Gives reliable performance estimates for our dataset  
+#  -Keeps the 65 / 35 class ratio in every split  
+#  -Is light-weight to run GLM, Tree and RF models repeatedly
+#
+# Chosen method:  
+#  -STRATIFIED 10-fold cross-validation
+#  –Ten folds - roughly 1 900 rows for training and roughly 215 for testing each round.  
+#  –With 760 positive cases total, every fold still has roughly 75 AD patients
+#   --metrics such as Sensitivity should be stable.  
+#  –Computational cost is slight (10 fits per model) yet variance is much lower than a single 70 / 30 split ((estimate won't be overly optimistic or pessimistic)).
+
+
+
+set.seed(65778275) # reproducible folds
+cv_splits <- vfold_cv(
+  data, 
+  v      = 10, # 10-fold
+  strata = Diagnosis  # keeps class balance in each fold
+)
+
+print(cv_splits)
+# rsample object with 10 splits and class-stratification information
+
 
 
 
