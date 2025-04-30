@@ -809,3 +809,261 @@ ggplot(log_model$data, aes(x = fitted(log_model), y = residuals(log_model, type 
 #  ggpairs(data %>% dplyr::select(Age, Gender, Ethnicity, MMSE, FunctionalAssessment, Diagnosis),
 #          aes(color = factor(Diagnosis)))
 #}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################################################################################
+################# Data preparation & Lifestyle-Risk-Index (LRI) ################
+################################################################################
+# Goal is to keep only variables needed for the hypothesis + create a trimmed data frame for modelling
+
+# Keep only variables required by the hypothesis
+core_vars <- c(
+  "Diagnosis",
+  # non-modifiable risk factors
+  "Age", "Gender", "FamilyHistoryAlzheimers", "HeadInjury",
+  # baseline cognitive status
+  "MMSE", "FunctionalAssessment",
+  # lifestyle components
+  "PhysicalActivity", "DietQuality", "SleepQuality",
+  "Smoking", "AlcoholConsumption", "BMI"
+)
+
+data_hyp <- data %>% dplyr::select(all_of(core_vars))
+
+# Change each lifestyle component into a binary risk flag
+# (1 = risky level, 0 = healthy/reference level)
+data_hyp <- data_hyp %>% mutate(
+  pa_risk      = ifelse(PhysicalActivity   <  3, 1, 0),  # < 3 h moderate PA / wk
+  diet_risk    = ifelse(DietQuality        <= 4, 1, 0),  # low diet-quality score
+  sleep_risk   = ifelse(SleepQuality       <= 5, 1, 0),  # poor sleep quality
+  smoke_risk   = ifelse(Smoking            == 1, 1, 0),  # current smoker
+  alcohol_risk = ifelse(AlcoholConsumption  > 14,1, 0),  # > 14 units / wk
+  bmi_risk     = ifelse(BMI                >= 30,1, 0)   # obese
+)
+
+# Sum the six flags to obtain the Lifestyle-Risk-Index (LRI)
+data_hyp <- data_hyp %>% mutate(
+  LRI = pa_risk + diet_risk + sleep_risk + smoke_risk + alcohol_risk + bmi_risk
+)
+
+# Final fix of factor levels & drop rows with any missing values
+data_hyp <- data_hyp %>% 
+  mutate(
+    Diagnosis = factor(Diagnosis, levels = c(0, 1)),  # ensure 0 = No, 1 = Yes
+    Gender    = factor(Gender)                        # guarantee factor type
+  ) %>% 
+  drop_na()
+
+################################################################################
+################################ Hypothesis test ###############################
+################################################################################
+# H1: Higher LRI = higher odds of Alzheimer.
+
+model_primary <- glm(
+  Diagnosis ~ LRI +                                        # predictor
+    Age + Gender + FamilyHistoryAlzheimers + HeadInjury +  # non-modifiable risk
+    MMSE + FunctionalAssessment,                           # cognitive status
+  data   = data_hyp,
+  family = binomial
+)
+
+# Summarise regression
+summary(model_primary)
+
+# Convert log-odds to odds-ratios
+exp(cbind(OR = coef(model_primary),   # exponentiate → odds ratios
+          confint(model_primary)))    # 95 % CIs for interpretation
+
+
+
+################################################################################
+############################ Hypothesis-test results ###########################
+################################################################################
+# Coefficient table shows:
+# -LRI  ->  Est. =  –0.015   (p = 0.74) ... meaning NOT significant
+# -Age  ->  Non-sig.
+# -MMSE & FunctionalAssessment ... highly significant (***)
+# --After we account for MMSE and FunctionalAssessment, the six-item lifestyle score does NOT add explanatory power -> Cognitive status dominates
+# -Null deviance: 2792.3 on 2148: This high number tells us that it fits poorly. 
+# Residual deviance: 2358.5 on 2141: Shows improvement with collective effort of predictors.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################################################################################
+########################### Alternative models (DT & RF) #######################
+################################################################################
+# X-fold cross-validation function that works for these 3 models:
+# -glm – logistic regression
+# -rpart – single decision tree
+# -rf – random forest
+# --It returns mean Accuracy, Sensitivity, Specificity, and AUC
+
+# Args:
+# -model_type (glm, rpart, rf)
+# -formula_or_data (for GLM we need a formula, for tree models we ignore it)
+# -data (must contain predictors and diagnosis)
+
+evaluate_model <- function(model_type = c("glm", "rpart", "rf"),
+                           formula_or_data, data){
+  # For inner peace
+  model_type <- match.arg(model_type) # ensure the supplied string is valid
+  set.seed(65778275)                  # reproducibility
+  
+  # Make folds. Keeps class distribution equal-ish in each fold
+  # k value can be experimented with
+  folds <- createFolds(data$Diagnosis, k = 10)
+  
+  # Var for fold statistics
+  cv_res <- data.frame(Accuracy = numeric(),
+                       Sensitivity = numeric(),
+                       Specificity = numeric(),
+                       AUC = numeric())
+  
+  # Cross validation loop for index in folds
+  for(idx in folds){
+    # train set = all rows not in current fold -> model learns here
+    # test set = current fold -> model is evaluated on unseen data
+    train <- data[-idx, ]
+    test <- data[idx, ]
+    
+    # Fit model
+    # switch() chooses the fitting code block based on model_type
+    fit <- switch(model_type,
+                  glm = glm(formula_or_data, 
+                            data = train, 
+                            family = binomial), # (0 = No AD, 1 = AD)
+                  
+                  rpart = rpart(Diagnosis ~ ., 
+                                data = train, 
+                                method = "class", # use classification
+                                xval = 0,         # disable build in 10x (we use 10 fold)
+                                cp = 0.01),       # shallow base -> tune later!
+                  
+                  rf = randomForest(Diagnosis ~ ., 
+                                    data = train,
+                                    ntree = 500,        # pretty value, can be experimented with
+                                    importance = TRUE)) # for feature importance plot
+    
+    # Predict probabilities on test data
+    if(model_type == "glm"){
+      prob <- predict(fit, test, type = "response") # numeric
+    } else if (model_type == "rpart") {
+      pmat <- predict(fit, test, type = "prob")
+      
+      # if the training fold had no positives, pmat has only column "0" -> resulting in error
+      prob <- if ("1" %in% colnames(pmat)) pmat[, "1"] else rep(0, nrow(test))
+    } else {# random-forest
+      
+      pmat <- predict(fit, test, type = "prob")
+      prob <- pmat[, "1"]
+    }
+    # Convert probs to class labels using the canonical 0.5 cut-off
+    # If value is >0.5 its 1 otherwise its 0
+    pred <- factor(ifelse(prob > 0.5, 1, 0), levels = c(0,1))
+    
+    # Compute fold metrics
+    # test$Diagnosis -> observed class values for this test split
+    cm  <- confusionMatrix(pred, test$Diagnosis, positive = "1")
+    
+    # as.numeric produces either 1 or 2 so we substract 1 to get 0/1 -> roc need 0/1 values
+    roc <- roc(as.numeric(test$Diagnosis) - 1, prob)
+    
+    # Store this fold’s metrics in cv_res
+    cv_res <- rbind(cv_res, data.frame(
+      Accuracy    = cm$overall["Accuracy"],    # (TP + TN) / total
+      Sensitivity = cm$byClass["Sensitivity"], # TP / (TP + FN)
+      Specificity = cm$byClass["Specificity"], # TN / (TN + FP)
+      AUC         = auc(roc)
+    ))
+  }
+  # Return mean metrics across the 10 folds
+  colMeans(cv_res)
+}
+# Decision-tree (rpart) 
+dt_metrics <- evaluate_model("rpart", NULL, data_hyp)
+print(dt_metrics)
+
+# Visualise the tree
+dt_model <- rpart(Diagnosis ~ ., data = data_hyp, method = "class",
+                  xval = 10, cp = 0.01)
+rpart.plot(dt_model, type = 3, extra = 104,
+           main = "Decision Tree for Alzheimer Diagnosis")
+
+# Random-Forest
+rf_metrics <- evaluate_model("rf", NULL, data_hyp)
+print(rf_metrics)
+
+# Variable-importance plot
+N_top <- 15 # N with most impact
+set.seed(65778275)
+rf_full <- randomForest(Diagnosis ~ ., data = data_hyp,
+                        ntree = 500, importance = TRUE)
+varImp <- importance(rf_full)[, "MeanDecreaseGini", drop = FALSE] %>%
+  as.data.frame() %>%
+  rownames_to_column("Variable") %>%
+  arrange(desc(MeanDecreaseGini)) %>%
+  slice_head(n = N_top) 
+
+ggplot(varImp, aes(x = reorder(Variable, MeanDecreaseGini),
+                   y = MeanDecreaseGini)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() + theme_minimal() +
+  labs(title = paste("Random-Forest: Top", N_top, "variables"),
+       x = NULL, y = "Mean Decrease Gini")
+
+# Compare with primary logistic model
+log_metrics <- evaluate_model(
+  "glm",
+  Diagnosis ~ LRI + Age + Gender + FamilyHistoryAlzheimers +
+    HeadInjury + MMSE + FunctionalAssessment,
+  data_hyp)
+
+perf_tbl <- rbind(Logistic = log_metrics,
+                  DecisionTree = dt_metrics,
+                  RandomForest = rf_metrics)
+print(round(perf_tbl, 3))
