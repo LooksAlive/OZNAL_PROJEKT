@@ -1,10 +1,10 @@
-getwd()
-
+################################################################################
+########################## Setup & data import #################################
+################################################################################
 library(tidyverse)
 library(tidymodels)
 #library(ggplot2)
 library(magrittr)
-library(car)
 library(caret)
 library(gridExtra)
 library(GGally)
@@ -25,43 +25,97 @@ library(car)    # Levene's test for homoscedasticit
 library(latexpdf)
 
 
-
+getwd()
 data <- read.csv("alzheimers_disease_data.csv")
 
-#'# 1. Initial Data Exploration
 
-#' Drop the 'DoctorInCharge' column since it is empty and no use to us.
+
+################################################################################
+############################ Hypothesis formulation ############################
+################################################################################
+# H0: After controlling for non-modifiable risk (Age, Gender, FamilyHistoryAlzheimers, HeadInjury) and cognitive status (MMSE, FunctionalAssessment), the composite Lifestyle Risk Index (LRI) is not associated with Alzheimer’s diagnosis.
+
+# H1: A higher LRI is associated with higher odds of an Alzheimer’s diagnosis, independent of age, gender, family history, head injury, MMSE, and functional status.
+
+
+
+################################################################################
+############################## Initial Data Exploration ########################
+################################################################################
+# Drop pointless columns like the DoctorInCharge since it is empty and no use to us and PatientID.
 data <- data %>% dplyr::select(-DoctorInCharge, -PatientID)
 
-str(data)
-summary(data)
+#Manual look at data
+str(data)     # general info about columns (type...)
+summary(data) # info about each column (min, max, median...)
 
-sum(is.na(data))
-colSums(is.na(data))
+sum(is.na(data))                  # how many are NAs in ds
+colSums(is.na(data))              # how many are NAs in each column
 
-table(data$Diagnosis)
-prop.table(table(data$Diagnosis))
-#' disease distribution is biased - more negatives
+# Check for duplicated rows
+any( duplicated(data) )
+dup_pairs <- data %>%
+  count(Gender, Age) %>% # group by identifier
+  filter(n > 1) # keep only repeated combinations
+nrow(dup_pairs)
 
-#' convert to factors
+# Check outcome balance
+table(data$Diagnosis)             # AD diagnosis; 0 - No, 1 - Yes
+prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
+# Disease distribution is biased - more negatives
+
+# quick z-score (measures exactly how many standard deviations above or below the mean a data point) sweep for the continuous variables
+num_cols <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
+
+z_outliers <- sapply(num_cols, function(v){
+  sum(abs(scale(data[[v]])) > 4)   # count rows beyond ±4 SD
+})
+
+print(z_outliers[z_outliers > 0])
+# Returns an empty named integer(0) -> no extreme numeric outliers
+
+# Power check - events-per-variable (EPV) for logistic
+events_pos <- sum(data$Diagnosis == 1)   # 760AD
+p          <- 7                          # of covariates (measurable variable that has a statistical relationship with the dependent variable) in H1 model
+EPV        <- events_pos / p
+cat("Events-per-variable (EPV) =", round(EPV, 1), "\n")
+# EPV is 108 which is > 10 which is generally considered adequate for stable logistic estimates
+
+# Convert low-cardinality (few unique values) numerics to factors
 for (col_name in names(data)) {
+  # Check if column type is numeric and has less than 6 unique values
   if (is.numeric(data[[col_name]]) && length(unique(data[[col_name]])) <= 5) {
     data <- data %>%
+      # unquote string to process as symbol (was headache without it)
       mutate(!!sym(col_name) := as.factor(!!sym(col_name)))
   }
 }
 
-str(data)
+# numeric part of the H1 dataset  (excludes Diagnosis)
+num_h1 <- data %>% 
+  dplyr::select(Age, MMSE, FunctionalAssessment)
 
+corrplot(cor(num_h1), method = "color", type = "upper",
+         tl.col = "black", tl.srt = 10,
+         title = "Correlation among numeric H1 predictors")
+
+# VIF (Variance Inflation Factor for the logistic model
+vif_vals <- car::vif(glm(Diagnosis ~ Age + Gender + FamilyHistoryAlzheimers +
+                           HeadInjury + MMSE + FunctionalAssessment,
+                         data = data, family = binomial))
+print(vif_vals)
+
+# Check for outliers before deciding on transformations
 data %>%
   select_if(is.numeric) %>%
   pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
   ggplot(aes(x = value)) +
-  geom_histogram(fill = "steelblue", color = "black") +
+  geom_histogram(fill = "lightblue", color = "grey20") +
   facet_wrap(~ variable, scales = "free_x") +
   labs(title = "Histograms of Numerical Attributes", x = "Value", y = "Frequency") +
   theme_minimal()
 
+# Check for categorical distributions
 data %>%
   select_if(is.factor) %>%
   pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
@@ -72,8 +126,161 @@ data %>%
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-#' This was an interesting move to show distributions like this, we can observe
-#' for example that positive diagnosis resonates in some attributes:
+# EDA findings
+# -No missing values in any column -> no imputation ( substituting missing data with a different value) needed
+# -Slight diagnosis imbalance (65 % negative, 35 % positive) -> we will most likely adjust probability threshold to avoid bias
+# -Numeric attributes - mostly uniform -> we keep all rows and skip outlier deletion
+# -Categorical factors - most are highly imbalanced with the 0 level dominant
+# -- Conclusion - data quality and distributions are suitable for the planned logistic and tree/forest models. No transformations or outlier removals are mandated at this stage.
+
+
+
+################################################################################
+################## 4. Requirements Analysis & Model Choice #####################
+################################################################################
+# R-1 picked candidate model families 
+# We need algorithms that can handle:
+# -binary outcome (Diagnosis 0 / 1),
+# -a mix of numeric and factor predictors,
+# -no missing data,
+# -~2 000 observations  vs  ≤ 30 predictors.
+#
+# Methods:
+# 1) Logistic GLM 
+#     –Parametric, interpretable odds ratios
+# 2) Linear Discriminant Analysis (LDA)
+#     -Assumes multivariate-normal (normal distribution to two or more variables) predictors in each class
+# 3) Decision Tree (rpart)
+#     -Handles mixed types, captures non-linear splits, transparent rules
+# 4) Random Forest
+#     -Ensemble of trees: should yield higher AUC, robust to noise, accepts
+#          both numeric and factor predictors out of the box
+#
+# These four (GLM, LDA, Tree, RF) will be evaluated against the dataset
+
+candidate_models <- c("Logistic GLM",
+                      "LDA",
+                      "Decision Tree",
+                      "Random Forest")
+
+# R-2  Model–requirement matrix
+
+# Dataset stats computed in EDA
+outcome_binary <- (length(unique(data$Diagnosis)) == 2)
+mixed_types <- any(sapply(data, is.factor)) & any(sapply(data, is.numeric))
+missing_pct <- 100 * sum(is.na(data)) / prod(dim(data))
+epv <- 108
+vif_max <- max(vif_vals)
+
+yes <- "Yes"
+no  <- "No"
+
+# Build the requirement table 
+req_tab <- data.frame(
+  Requirement    = c("Binary outcome", # model must handle 0 / 1
+                     "Mixed num+factor OK", # both numeric & factor predictors present
+                     "0 % missing OK", # we have 0 % NAs
+                     "Distributional assumption met", # linear log-odds, MV-normal
+                     sprintf("VIF ≤ 5  (max %.2f)", vif_max), # collinearity tolerance
+                     sprintf("EPV ≥ 10  (EPV %d)", epv)), # sample-size rule
+  
+  Logistic_GLM   = c(yes, # GLM natively supports binomial family
+                     yes, # factors become dummies automatically
+                     if (missing_pct==0) yes else no, # all rows complete -> OK
+                     "Linear log-odds", # GLM requires linearity in logit -> will be tested
+                     if (vif_max<5) yes else no, # good value VIF cut-off
+                     if (epv>=10)  yes else no), # EPV computed earlier (=108)
+  
+  LDA            = c(yes, # binary groups fine
+                     no, # needs all-numeric
+                     if (missing_pct==0) yes else no, # missing predictors
+                     "MV-normal", # assumes multivariate normality
+                     if (vif_max<10) yes else no, # LDA tolerates moderate VIF
+                     if (nrow(data)>200) yes else no), # heuristic sample rule
+  
+  Decision_Tree  = c(yes, yes, yes, "None", yes, yes), # trees have no linearity or VIF limits
+  
+  Random_Forest  = c(yes, yes, yes, "None", yes, yes), # shares tree properties
+  
+  row.names = NULL, check.names = FALSE
+)
+
+print(req_tab)
+
+
+# Model-selection rationale
+# Data facts already known
+cat("\nKey stats → EPV =", epv,
+    "  | max VIF =", round(vif_max,2),
+    "  | missing % =", missing_pct, "\n")
+
+# Comparison
+# Logistic GLM:
+#  -Provides odds ratios that test H1 directly. 
+#  -All assumptions met (binary outcome, EPV>10, VIF≈1, 0% missing).
+
+# Decision-Tree: 
+#  -Handles mixed predictors, no distributional assumptions, produces transparent IF-THEN rules. 
+
+# Random-Forest:
+#  -Likely higher raw accuracy than a single tree, but interpretability falls.
+#  -We keep it only for feature-importance exploration, not as a deployable model.
+
+# LDA: 
+#  -Dropped - requires all-numeric and multivariate normality, both were violated here. 
+# -Would add no value beyond GLM.
+
+# Planned modeling path
+primary_model <- "Logistic GLM"     # for inference / H1 test
+secondary_model <- "Decision Tree"    # benchmark with explanations
+exploratory_model <- "Random Forest"    # optional accuracy check
+
+cat("\nChosen primary model:", primary_model,
+    "\nChosen benchmark:", secondary_model,
+    "\nExploratory only:", exploratory_model,)
+
+
+# Verify that Age, MMSE and FunctionalAssessment are approximately linearly related to the log-odds of Alzheimer’s (GLM assumption)
+pred_vars <- c("Age", "MMSE", "FunctionalAssessment") # predictors to inspect
+
+# Plot empirical logit for one variable 
+emp_logit_plot <- function(df, xvar){
+  tmp <- df %>% 
+    
+    # Slice predictor into 10 equal-width bins
+    mutate(bin = cut(.data[[xvar]], breaks = 10)) %>% 
+    group_by(bin) %>%
+    
+    summarise(
+      # Compute bin midpoint
+      mid = mean(.data[[xvar]]),
+      # Diagnosis was converted to factor earlier, so turn back to 0/1
+      pr  = (sum(as.numeric(as.character(Diagnosis))) + 0.5) / (n() + 1)
+    ) %>% ungroup()
+  
+  # Scatter plot
+  ggplot(tmp, aes(mid, log(pr/(1 - pr)))) +
+    geom_point() +
+    geom_smooth(method = "loess", se = FALSE, span = 1) +
+    labs(title = paste("Empirical logistic -", xvar),
+         # logistic(Pr(AD)) = models the log-odds of an event
+         x = xvar, y = "logistic(Pr(AD))") +
+    theme_minimal()
+}
+
+# Generate one plot per numeric predictor
+for(v in pred_vars) print(emp_logit_plot(data, v))
+
+
+# Results:
+# Age                
+#  Log-odds form a shallow U-shape: decrease up to ~70 y, flatten, then rise.
+
+# MMSE
+#  –Flat until ~12 points, then steep drop – strong non-linearity at low scores.
+
+# FunctionalAssessment
+#  –Smooth monotonic decline but still curved – mild non-linearity.
 
 
 
