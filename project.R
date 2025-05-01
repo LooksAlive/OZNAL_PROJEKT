@@ -24,6 +24,7 @@ library(lmtest) # Breusch-Pagan test for homoscedasticity
 library(car)    # Levene's test for homoscedasticit
 library(latexpdf)
 library(rsample)  
+library(shiny)
 
 
 getwd()
@@ -60,10 +61,15 @@ dup_pairs <- data %>%
   filter(n > 1) # keep only repeated combinations
 nrow(dup_pairs)
 
+data %>% 
+  filter(duplicated(data)==TRUE)
+# No duplicated values
+
+
 # Check outcome balance
 table(data$Diagnosis)             # AD diagnosis; 0 - No, 1 - Yes
 prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
-# Disease distribution is biased - more negatives
+# Dataset has more negatives diagnosis than positive (65%)
 
 # quick z-score (measures exactly how many standard deviations above or below the mean a data point) sweep for the continuous variables
 num_cols <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
@@ -498,21 +504,6 @@ health_metrics <- c("BMI", "SystolicBP", "DiastolicBP", "CholesterolTotal",
                     "CholesterolLDL", "CholesterolHDL", "MMSE", "FunctionalAssessment", 
                     "SleepQuality")
 
-data_long <- data %>%
-  dplyr::select(Diagnosis, all_of(health_metrics)) %>%
-  pivot_longer(cols = all_of(health_metrics), 
-               names_to = "Metric", 
-               values_to = "Value")
-
-ggplot(data_long, aes(x = Metric, y = Value, fill = factor(Diagnosis))) +
-  geom_boxplot() +
-  facet_wrap(~ Metric, scales = "free") +
-  labs(title = "Health Metrics by Diagnosis Status",
-       x = NULL,
-       y = "Value",
-       fill = "Diagnosis") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 #' Perform t-tests to compare means between diagnosis groups - 
 #' draw conslusion from statistics now instead of visual boxplots 
