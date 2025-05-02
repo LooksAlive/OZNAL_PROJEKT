@@ -12,18 +12,15 @@ library(pROC)
 library(corrplot)
 library(ggmosaic)
 library(dplyr)
-library(ggcorrplot)
 library(MASS)
 library(randomForest)
-library(infotheo)  # MI
-library(entropy)   # MI
 library(rpart)
 library(rpart.plot)
 library(patchwork) # combining plots
-library(lmtest) # Breusch-Pagan test for homoscedasticity
-library(car)    # Levene's test for homoscedasticit
+library(car)
 library(latexpdf)
-library(rsample)  
+library(rsample)
+library(gbm)      # Gradient Boosting Machines
 library(shiny)
 
 
@@ -56,13 +53,6 @@ colSums(is.na(data))              # how many are NAs in each column
 
 # Check for duplicated rows
 any( duplicated(data) )
-dup_pairs <- data %>%
-  count(Gender, Age) %>% # group by identifier
-  filter(n > 1) # keep only repeated combinations
-nrow(dup_pairs)
-
-data %>% 
-  filter(duplicated(data)==TRUE)
 # No duplicated values
 
 
@@ -71,15 +61,6 @@ table(data$Diagnosis)             # AD diagnosis; 0 - No, 1 - Yes
 prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
 # Dataset has more negatives diagnosis than positive (65%)
 
-# quick z-score (measures exactly how many standard deviations above or below the mean a data point) sweep for the continuous variables
-num_cols <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
-
-outliers <- sapply(num_cols, function(v){
-  sum(abs(scale(data[[v]])) > 4)   # count rows beyond ±4 SD
-})
-
-print(outliers[outliers > 0])
-# Returns an empty named integer(0) -> no extreme numeric outliers
 
 # Power check - events-per-variable (EPV) for logistic
 events_pos <- sum(data$Diagnosis == 1)   # 760AD
@@ -98,19 +79,65 @@ for (col_name in names(data)) {
   }
 }
 
-# numeric part of the H1 dataset  (excludes Diagnosis)
-num_h1 <- data %>% 
-  dplyr::select(Age, MMSE, FunctionalAssessment)
 
-corrplot(cor(num_h1), method = "color", type = "upper",
-         tl.col = "black", tl.srt = 10,
-         title = "Correlation among numeric H1 predictors")
+
+num_cols <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
+
+detect_outliers <- function(column) {
+  q1 <- quantile(column, 0.25, na.rm = TRUE)
+  q3 <- quantile(column, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  lower_bound <- q1 - 1.5 * iqr
+  upper_bound <- q3 + 1.5 * iqr
+  return(column < lower_bound | column > upper_bound)
+}
+
+# Apply to each numeric column and report
+outlier_summary <- sapply(num_cols, function(colname) {
+  sum(detect_outliers(data[[colname]]), na.rm = TRUE)
+})
+
+# Convert to data frame for easier viewing
+outlier_df <- data.frame(Variable = names(outlier_summary),
+                         Outlier_Count = as.integer(outlier_summary))
+
+print(outlier_df)
+
+# There are no outliers in numeric data
 
 # VIF (Variance Inflation Factor for the logistic model
 vif_vals <- car::vif(glm(Diagnosis ~ Age + Gender + FamilyHistoryAlzheimers +
                            HeadInjury + MMSE + FunctionalAssessment,
                          data = data, family = binomial))
 print(vif_vals)
+
+numeric_vars <- data %>% 
+  select_if(is.numeric)
+#' Normality
+normality_p_values <- apply(numeric_vars, 2, function(x) {
+  shapiro.test(x)$p.value
+})
+print(sort(normality_p_values, decreasing = T))
+# P-values < 0.05 suggest a deviation from normality. Consider transformations if needed.
+# we can observe that none or numeric attributes in normally distributed.
+
+# Correlation for numeric variables
+# TODO: enhance this for all keeping just the triangle- note vars are factorized 
+# therefore not working.
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+corrplot(cor_matrix, 
+         method = "color", 
+         type = "upper", 
+         order = "hclust",
+         tl.col = "black", 
+         tl.cex = 0.7,
+         addCoef.col = "black",
+         number.cex = 0.5,
+         title = "Correlation Matrix of Numerical Variables",
+         mar = c(0, 0, 2, 0))
+
+
+
 
 # Check for outliers before deciding on transformations
 data %>%
@@ -383,107 +410,6 @@ ggplot(data, aes(x = Diagnosis, y = MMSE, fill = Diagnosis)) +
 #' this is MMSE (Cognitive Assessment), it appears to be a predictor on which
 #' diagnosis depends the most so far.
 
-numeric_vars <- data %>% 
-  select_if(is.numeric)
-cor_matrix <- cor(numeric_vars, use = "complete.obs")
-
-corrplot(cor_matrix, 
-         method = "color", 
-         type = "upper", 
-         order = "hclust",
-         tl.col = "black", 
-         tl.cex = 0.7,
-         addCoef.col = "black",
-         number.cex = 0.5,
-         title = "Correlation Matrix of Numerical Variables",
-         mar = c(0, 0, 2, 0))
-
-
-
-#' Normality
-normality_p_values <- apply(numeric_vars, 2, function(x) {
-    shapiro.test(x)$p.value
-})
-cat("- Normality of predictors: Checking with Shapiro-Wilk test (for applicable numeric predictors):\n")
-print(sort(normality_p_values))
-cat("  (P-values < 0.05 suggest a deviation from normality. Consider transformations if needed.)\n")
-
-#' Not normally distributed
-
-
-
-numeric_preds <- numeric_vars
-response_var <- as.numeric(data$Diagnosis) - 1 # Convert to 0/1 for modeling
-
-cat("--- Homoscedasticity Tests for Each Numeric Predictor ---\n\n")
-
-homoscedasticity_results <- list()
-
-for (col in names(numeric_preds)) {
-  cat(paste("--- Testing homoscedasticity for predictor:", col, "---\n"))
-  
-  formula_str <- paste("response_var ~", col)
-  model_bp <- lm(formula_str, data = data.frame(response_var = response_var, numeric_preds))
-  
-  # Breusch-Pagan Test
-  bp_test <- bptest(model_bp)
-  bp_p_value <- bp_test$p.value
-  cat(paste("Breusch-Pagan Test P-value:", round(bp_p_value, 4), "\n"))
-  if (bp_p_value < 0.05) {
-    cat("Interpretation: The Breusch-Pagan test suggests evidence of heteroscedasticity (non-constant variance of errors) for this predictor.\n")
-  } else {
-    cat("Interpretation: The Breusch-Pagan test does not provide strong evidence against homoscedasticity (constant variance of errors) for this predictor.\n")
-  }
-  cat("\n")
-  
-  # Levene's Test
-  levene_df <- data.frame(y = data[[col]], group = data$Diagnosis)
-  levene_test <- leveneTest(y ~ group, data = levene_df)
-  levene_p_value <- levene_test$`Pr(>F)`[1]
-  cat(paste("Levene's Test P-value:", round(levene_p_value, 4), "\n"))
-  if (levene_p_value < 0.05) {
-    cat("Interpretation: Levene's test suggests that the variances of the predictor variable are significantly different between the two Diagnosis groups.\n")
-  } else {
-    cat("Interpretation: Levene's test does not provide strong evidence that the variances of the predictor variable are different between the two Diagnosis groups.\n")
-  }
-  cat("\n")
-  
-  homoscedasticity_results[[col]] <- list(Breusch_Pagan_P_value = bp_p_value, Levene_P_value = levene_p_value)
-}
-
-print(homoscedasticity_results)
-
-
-
-cor_matrix <- cor(data %>% select_if(is.numeric))
-high_corr <- findCorrelation(cor_matrix, cutoff = 0.75) 
-if (length(high_corr) > 0) {
-  high_corr_names <- colnames(cor_matrix)[high_corr]
-  cat(paste("- Potential multicollinearity in:", paste(high_corr_names, collapse = ", "), "\n"))
-} else {
-  cat("- No severe multicollinearity detected (based on correlation).\n")
-}
-
-
-
-
-
-
-#'# Summary Statistics for Numerical Attributes
-
-data %>%
-  select_if(is.numeric) %>%
-  summary()
-
-# --- Relationship between Two Categorical Attributes (e.g., Gender and Diagnosis) ---
-if ("Gender" %in% names(data) && is.factor(data$Gender) &&
-    "Diagnosis" %in% names(data) && is.factor(data$Diagnosis)) {
-  print("\n--- Cross-Tabulation: Gender vs. Diagnosis ---")
-  cross_tab_gender_diag <- table(data$Gender, data$Diagnosis)
-  print(cross_tab_gender_diag)
-  print("\nChi-squared Test: Gender vs. Diagnosis")
-  print(chisq.test(cross_tab_gender_diag))
-}
 
 
 
@@ -493,6 +419,34 @@ if ("Gender" %in% names(data) && is.factor(data$Gender) &&
 
 
 
+
+
+
+
+
+
+
+
+################################################################################
+################# Data preparation & Lifestyle-Risk-Index (LRI) ################
+################################################################################
+# Goal is to keep only variables needed for the hypothesis + create a trimmed data frame for modelling
+
+# Keep only variables required by the hypothesis
+core_vars <- c(
+  "Diagnosis",
+  # non-modifiable risk factors
+  "Age", "Gender", "FamilyHistoryAlzheimers", "HeadInjury",
+  # baseline cognitive status
+  "MMSE", "FunctionalAssessment",
+  # lifestyle components
+  "PhysicalActivity", "DietQuality", "SleepQuality",
+  "Smoking", "AlcoholConsumption", "BMI"
+)
+
+
+#' Perform t-tests to compare means between diagnosis groups - 
+#' draw conslusion from statistics now instead of visual boxplots 
 
 
 
@@ -505,8 +459,6 @@ health_metrics <- c("BMI", "SystolicBP", "DiastolicBP", "CholesterolTotal",
                     "SleepQuality")
 
 
-#' Perform t-tests to compare means between diagnosis groups - 
-#' draw conslusion from statistics now instead of visual boxplots 
 t_test_results <- data.frame(
   Metric = character(),
   t_statistic = numeric(),
@@ -514,7 +466,6 @@ t_test_results <- data.frame(
   significant = character(),
   stringsAsFactors = FALSE
 )
-
 for (metric in health_metrics) {
   t_result <- t.test(formula(paste(metric, "~ Diagnosis")), data = data)
   
@@ -565,281 +516,6 @@ print(chi_test_results)
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-#'# 2. Logistic Regression with all variables
-#' Convert factors to numeric for modeling
-data_model <- data
-for (var in cat_vars) {
-  data_model[[var]] <- as.numeric(as.character(data_model[[var]]))
-}
-data_model$Diagnosis <- as.factor(data_model$Diagnosis)
-
-full_model <- glm(Diagnosis ~ ., data = data_model, family = binomial)
-summary_model <- summary(full_model)
-
-coef_table <- as.data.frame(summary_model$coefficients)
-coef_table$Variable <- rownames(coef_table)
-rownames(coef_table) <- NULL
-coef_table <- coef_table[order(abs(coef_table$`z value`), decreasing = TRUE), ]
-coef_table <- coef_table[2:nrow(coef_table), ] # Remove intercept
-coef_table$p_value <- coef_table$`Pr(>|z|)`
-coef_table$significance <- ifelse(coef_table$p_value < 0.05, "*", "")
-coef_table$significance[coef_table$p_value < 0.01] <- "**"
-coef_table$significance[coef_table$p_value < 0.001] <- "***"
-
-print("Top predictors based on logistic regression:")
-head(coef_table[, c("Variable", "Estimate", "z value", "p_value", "significance")], 15)
-
-#' Stepwise Selection to identify key predictors
-step_model <- stepAIC(full_model, direction = "both", trace = FALSE)
-final_formula <- formula(step_model)
-print("Variables selected by stepwise selection:")
-print(final_formula)
-
-#' Random Forest for feature importance
-set.seed(123)
-rf_model <- randomForest(Diagnosis ~ ., data = data_model, importance = TRUE)
-rf_model
-importance_df <- as.data.frame(importance(rf_model))
-importance_df$Variable <- rownames(importance_df)
-rownames(importance_df) <- NULL
-importance_df <- importance_df[order(importance_df$MeanDecreaseGini, decreasing = TRUE), ]
-
-print("Top predictors based on Random Forest importance:")
-head(importance_df[, c("Variable", "MeanDecreaseAccuracy", "MeanDecreaseGini")], 15)
-
-#' Visualize feature importance
-ggplot(head(importance_df, 15), aes(x = reorder(Variable, MeanDecreaseGini), y = MeanDecreaseGini)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "Top 15 Predictors by Random Forest", 
-       x = "Variables", 
-       y = "Mean Decrease Gini")
-
-
-
-
-
-
-
-
-#'# Information Value analysis
-library(Information)
-iv_data <- data
-iv_data$Diagnosis <- as.numeric(as.character(iv_data$Diagnosis))
-
-iv_results <- data.frame(
-  Variable = character(),
-  IV = numeric(),
-  stringsAsFactors = FALSE
-)
-
-for (var in names(iv_data)[names(iv_data) != "Diagnosis"]) {
-  tryCatch({
-    iv_obj <- create_infotables(data = iv_data, y = "Diagnosis", bins = 10, parallel = FALSE)
-    var_iv <- iv_obj$Tables[[var]]$IV
-    iv_results <- rbind(iv_results, data.frame(Variable = var, IV = var_iv, stringsAsFactors = FALSE))
-  }, error = function(e) {
-    # Skip variables that cause errors
-  })
-}
-
-iv_results <- iv_results[order(iv_results$IV, decreasing = TRUE), ]
-print("Predictors ranked by Information Value:")
-print(iv_results)
-
-
-
-
-
-
-
-
-#' Cross-validated performance metrics for key predictors
-set.seed(123)
-cv_formula <- final_formula
-
-evaluate_model <- function(formula, data) {
-  set.seed(123)
-  # Create 10-fold CV
-  folds <- createFolds(data$Diagnosis, k = 10)
-  cv_results <- data.frame(Accuracy = numeric(), Sensitivity = numeric(), 
-                           Specificity = numeric(), AUC = numeric())
-  
-  for (i in 1:length(folds)) {
-    # Split data
-    test_indices <- folds[[i]]
-    train_data <- data[-test_indices, ]
-    test_data <- data[test_indices, ]
-    
-    # Train model
-    model <- glm(formula, data = train_data, family = binomial)
-    
-    # Predict
-    predictions <- predict(model, test_data, type = "response")
-    pred_class <- ifelse(predictions > 0.5, 1, 0)
-    
-    # Evaluate
-    conf_matrix <- confusionMatrix(factor(pred_class), test_data$Diagnosis, positive = "1")
-    roc_obj <- roc(as.numeric(test_data$Diagnosis) - 1, predictions)
-    
-    # Store results
-    cv_results <- rbind(cv_results, data.frame(
-      Accuracy = conf_matrix$overall["Accuracy"],
-      Sensitivity = conf_matrix$byClass["Sensitivity"],
-      Specificity = conf_matrix$byClass["Specificity"],
-      AUC = auc(roc_obj)
-    ))
-  }
-  
-  # Return average metrics
-  return(colMeans(cv_results))
-}
-
-cv_metrics <- evaluate_model(cv_formula, data_model)
-print("Cross-validated performance metrics using selected features:")
-print(cv_metrics)
-
-
-
-
-
-
-
-
-#'# Final logistic regression model
-
-
-top_predictors <- c("MMSE", "BehavioralProblems", "FunctionalAssessment", 
-                    "MemoryComplaints", "CholesterolHDL",
-                    "SleepQuality", "ADL")
-
-model_data <- data %>% 
-  dplyr::select(all_of(c(top_predictors, "Diagnosis")))
-
-model_data <- na.omit(model_data)
-
-set.seed(123)
-train_index <- createDataPartition(model_data$Diagnosis, p = 0.7, list = FALSE)
-train_data <- model_data[train_index, ]
-test_data <- model_data[-train_index, ]
-
-log_model <- glm(Diagnosis ~ ., data = train_data, family = binomial)
-
-summary_log <- summary(log_model)
-print(summary_log)
-
-test_probs <- predict(log_model, newdata = test_data, type = "response")
-
-roc_obj <- roc(test_data$Diagnosis, test_probs)
-print(paste("AUC:", round(auc(roc_obj), 3)))
-
-coords_obj <- coords(roc_obj, "best", best.method = "youden")
-optimal_threshold <- coords_obj$threshold
-print(paste("Optimal threshold:", round(optimal_threshold, 3)))
-
-test_preds <- ifelse(test_probs > optimal_threshold, 1, 0)
-test_preds <- factor(test_preds, levels = levels(test_data$Diagnosis))
-
-conf_matrix <- confusionMatrix(test_preds, test_data$Diagnosis, positive = "1")
-print(conf_matrix)
-
-plot(roc_obj, main = "ROC Curve for Logistic Regression Model")
-points(coords_obj$specificity, coords_obj$sensitivity, pch = 19, col = "red")
-text(coords_obj$specificity, coords_obj$sensitivity, 
-     labels = paste("Threshold =", round(optimal_threshold, 2)), pos = 4)
-
-pred_df <- data.frame(
-  Actual = test_data$Diagnosis,
-  Probability = test_probs
-)
-
-ggplot(pred_df, aes(x = Probability, fill = Actual)) +
-  geom_density(alpha = 0.5) +
-  geom_vline(xintercept = optimal_threshold, linetype = "dashed", color = "red") +
-  annotate("text", x = optimal_threshold + 0.05, y = 0.5, 
-           label = paste("Threshold =", round(optimal_threshold, 2))) +
-  labs(title = "Distribution of Predicted Probabilities by Actual Class",
-       x = "Predicted Probability", 
-       y = "Density") +
-  theme_minimal()
-
-
-
-ggplot(log_model$data, aes(sample = residuals(log_model, type = "deviance"))) +
-  stat_qq() +
-  stat_qq_line() +
-  labs(title = "QQ Plot of Deviance Residuals",
-       x = "Theoretical Quantiles",
-       y = "Sample Quantiles") +
-  theme_minimal()
-
-
-ggplot(log_model$data, aes(x = fitted(log_model), y = residuals(log_model, type = "deviance"))) +
-  geom_point(alpha = 0.6) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  labs(title = "Deviance Residuals vs. Fitted Values",
-       x = "Fitted Probabilities",
-       y = "Deviance Residuals") +
-  theme_minimal()
-
-
-#if (ncol(data) > 3) {
-#  ggpairs(data %>% dplyr::select(Age, Gender, Ethnicity, MMSE, FunctionalAssessment, Diagnosis),
-#          aes(color = factor(Diagnosis)))
-#}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-################################################################################
-################# Data preparation & Lifestyle-Risk-Index (LRI) ################
-################################################################################
-# Goal is to keep only variables needed for the hypothesis + create a trimmed data frame for modelling
-
-# Keep only variables required by the hypothesis
-core_vars <- c(
-  "Diagnosis",
-  # non-modifiable risk factors
-  "Age", "Gender", "FamilyHistoryAlzheimers", "HeadInjury",
-  # baseline cognitive status
-  "MMSE", "FunctionalAssessment",
-  # lifestyle components
-  "PhysicalActivity", "DietQuality", "SleepQuality",
-  "Smoking", "AlcoholConsumption", "BMI"
-)
-
 data_hyp <- data %>% dplyr::select(all_of(core_vars))
 
 # Change each lifestyle component into a binary risk flag
@@ -882,9 +558,108 @@ model_primary <- glm(
 # Summarise regression
 summary(model_primary)
 
+
+model_secondary <- glm(
+  Diagnosis ~ MMSE + FunctionalAssessment,
+  data   = data_hyp,
+  family = binomial
+)
+
+summary(model_secondary)
+
+AIC(model_primary, model_secondary)
+# AIC index shows that priamry/first model even having more variables is better.
+
+# Multicolinearity
+vif(model_secondary)
+vif(model_primary)
+# VIF values are < 5 therefore not multicolinearity detected.
+
 # Convert log-odds to odds-ratios
 exp(cbind(OR = coef(model_primary),   # exponentiate → odds ratios
           confint(model_primary)))    # 95 % CIs for interpretation
+
+library(leaps)
+m1_fit <- regsubsets(Diagnosis~ LRI +
+                       Age + Gender + FamilyHistoryAlzheimers + HeadInjury +
+                       MMSE + FunctionalAssessment, data=data_hyp)
+summary(m1_fit)
+
+# This resulting tables shows best combination of predictors for N number of
+# predictors e.g. if we want just 1 - we pick FunctionalAssessment, for 2 predictors
+# we pick FunctionalAssessment and MMSE, and for 3 we pick
+# FunctionalAssessment, MMSE and FamilyHistoryAlzheimers1
+
+
+
+#' Stepwise Selection to identify key predictors
+#step_model <- stepAIC(full_model, direction = "both", trace = FALSE)
+#final_formula <- formula(step_model)
+#print("Variables selected by stepwise selection:")
+#print(final_formula)
+
+
+
+
+
+
+
+
+
+
+
+# Step 2: Split dataset into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(data_hyp$Diagnosis, p = 0.7, list = FALSE)
+train_data <- data_hyp[train_index, ]
+test_data  <- data_hyp[-train_index, ]
+
+# Step 3: Fit logistic regression model
+model_primary <- glm(
+  Diagnosis ~ LRI + Age + Gender + FamilyHistoryAlzheimers + HeadInjury + MMSE + FunctionalAssessment,
+  data = train_data,
+  family = binomial
+)
+
+summary(model_primary)  # Optional: check summary
+
+# Step 4: Predict probabilities on test set
+test_probs <- predict(model_primary, newdata = test_data, type = "response")
+
+# Step 5: ROC analysis
+roc_obj <- roc(test_data$Diagnosis, test_probs)
+auc_val <- auc(roc_obj)
+cat("AUC:", round(auc_val, 3), "\n")
+
+# Step 6: Get optimal threshold (Youden's J)
+coords_obj <- coords(roc_obj, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
+optimal_threshold <- coords_obj["threshold"]
+optimal_threshold
+
+# Step 7: Confusion matrix - threshold 0.5
+preds_default <- factor(ifelse(test_probs > 0.5, 1, 0), levels = c(0, 1))
+conf_matrix_default <- confusionMatrix(preds_default, test_data$Diagnosis, positive = "1")
+cat("\nConfusion Matrix (Threshold 0.5):\n")
+print(conf_matrix_default)
+
+# Step 8: Confusion matrix - optimal threshold
+#preds_optimal <- factor(ifelse(test_probs > optimal_threshold, 1, 0), levels = c(0, 1))
+#conf_matrix_optimal <- confusionMatrix(preds_optimal, test_data$Diagnosis, positive = "1")
+#cat("\nConfusion Matrix (Optimal Threshold):\n")
+#print(conf_matrix_optimal)
+
+# Step 9: Plot ROC curve with optimal threshold marked
+plot(roc_obj, main = "ROC Curve: Logistic Regression", col = "blue", lwd = 2)
+points(1 - coords_obj["specificity"], coords_obj["sensitivity"], pch = 19, col = "red")
+text(1 - coords_obj["specificity"], coords_obj["sensitivity"],
+     labels = paste("Threshold =", round(optimal_threshold, 2)), pos = 4, col = "red")
+
+
+
+
+
+
+
 
 
 
@@ -1058,3 +833,84 @@ perf_tbl <- rbind(Logistic = log_metrics,
                   DecisionTree = dt_metrics,
                   RandomForest = rf_metrics)
 print(round(perf_tbl, 3))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Encode target variable (ensure this is binary 0/1, looks good already)
+data$Diagnosis_numeric <- ifelse(data$Diagnosis == 1, 1, 0)
+
+# Split data
+set.seed(123)
+split_idx <- createDataPartition(data$Diagnosis_numeric, p = 0.8, list = FALSE)
+train_data <- data[split_idx, ]
+test_data  <- data[-split_idx, ]
+
+# Remove the target and ID-like columns from training predictors
+train_x <- train_data %>% dplyr::select(-Diagnosis, -Diagnosis_numeric)
+test_x  <- test_data %>% dplyr::select(-Diagnosis, -Diagnosis_numeric)
+
+# One-hot encode if needed (you said categorical variables are int-coded, so no factors)
+# Here you might not need one-hot encoding unless your variables are factors
+# If all are numeric/int, you can skip this and just use them directly
+
+# Combine back for GBM
+train_full <- cbind(train_x, Diagnosis_numeric = train_data$Diagnosis_numeric)
+
+# Check for constant columns or near-zero variance
+nzv <- nearZeroVar(train_full, saveMetrics = TRUE)
+print(nzv[nzv$nzv == TRUE, ])
+
+# Remove them if necessary
+train_full <- train_full[, !nzv$nzv]
+
+# Train GBM with correct formula
+gbm_model <- gbm(
+  Diagnosis_numeric ~ .,
+  data = train_full,
+  distribution = "bernoulli",
+  n.trees = 100,
+  shrinkage = 0.1,
+  interaction.depth = 3,
+  n.minobsinnode = 10,
+  verbose = FALSE
+)
+
+# Check summary (variable importance)
+summary(gbm_model)
+
+
+# Remove NZV columns from test set using the same columns removed from train
+test_x <- test_x[, colnames(test_x) %in% colnames(train_full)]
+
+# Predict probabilities
+pred_probs <- predict(gbm_model, newdata = test_x, n.trees = 100, type = "response")
+
+# Convert probabilities to class labels (0 or 1) using 0.5 threshold
+pred_labels <- ifelse(pred_probs > 0.5, 1, 0)
+
+# Actual labels
+true_labels <- test_data$Diagnosis_numeric
+
+# Confusion matrix
+conf_mat <- confusionMatrix(as.factor(pred_labels), as.factor(true_labels), positive = "1")
+print(conf_mat)
+
+# AUC
+roc_obj <- roc(true_labels, pred_probs)
+auc_value <- auc(roc_obj)
+cat("AUC:", auc_value, "\n")
+
+# Accuracy reached 95%
+
