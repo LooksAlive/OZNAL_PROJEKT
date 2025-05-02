@@ -3,7 +3,7 @@
 ################################################################################
 library(tidyverse)
 library(tidymodels)
-#library(ggplot2)
+library(ggplot2)
 library(magrittr)
 library(caret)
 library(gridExtra)
@@ -12,29 +12,23 @@ library(pROC)
 library(corrplot)
 library(ggmosaic)
 library(dplyr)
+library(ggcorrplot)
 library(MASS)
 library(randomForest)
+library(infotheo)  # MI
+library(entropy)   # MI
 library(rpart)
 library(rpart.plot)
 library(patchwork) # combining plots
-library(car)
+library(lmtest) # Breusch-Pagan test for homoscedasticity
+library(car)    # Levene's test for homoscedasticit
 library(latexpdf)
-library(rsample)
-library(gbm)      # Gradient Boosting Machines
-library(shiny)
+library(rsample)  
+library(purrr)
 
 
 getwd()
 data <- read.csv("alzheimers_disease_data.csv")
-
-
-
-################################################################################
-############################ Hypothesis formulation ############################
-################################################################################
-# H0: After controlling for non-modifiable risk (Age, Gender, FamilyHistoryAlzheimers, HeadInjury) and cognitive status (MMSE, FunctionalAssessment), the composite Lifestyle Risk Index (LRI) is not associated with Alzheimer’s diagnosis.
-
-# H1: A higher LRI is associated with higher odds of an Alzheimer’s diagnosis, independent of age, gender, family history, head injury, MMSE, and functional status.
 
 
 
@@ -48,24 +42,21 @@ data <- data %>% dplyr::select(-DoctorInCharge, -PatientID)
 str(data)     # general info about columns (type...)
 summary(data) # info about each column (min, max, median...)
 
-sum(is.na(data))                  # how many are NAs in ds
-colSums(is.na(data))              # how many are NAs in each column
+sum(is.na(data)) # how many are NAs in ds
+colSums(is.na(data)) # how many are NAs in each column
 
 # Check for duplicated rows
 any( duplicated(data) )
-# No duplicated values
-
 
 # Check outcome balance
 table(data$Diagnosis)             # AD diagnosis; 0 - No, 1 - Yes
 prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
 # Dataset has more negatives diagnosis than positive (65%)
 
-
 # Power check - events-per-variable (EPV) for logistic
-events_pos <- sum(data$Diagnosis == 1)   # 760AD
-p          <- 7                          # of covariates (measurable variable that has a statistical relationship with the dependent variable) in H1 model
-EPV        <- events_pos / p
+events_pos <- sum(data$Diagnosis == 1) # 760AD
+p <- 7 # of covariates (measurable variable that has a statistical relationship with the dependent variable) in H1 model
+EPV <- events_pos / p
 cat("Events-per-variable (EPV) =", round(EPV, 1), "\n")
 # EPV is 108 which is > 10 which is generally considered adequate for stable logistic estimates
 
@@ -78,8 +69,6 @@ for (col_name in names(data)) {
       mutate(!!sym(col_name) := as.factor(!!sym(col_name)))
   }
 }
-
-
 
 num_cols <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
 
@@ -103,13 +92,12 @@ outlier_df <- data.frame(Variable = names(outlier_summary),
 
 print(outlier_df)
 
-# There are no outliers in numeric data
-
 # VIF (Variance Inflation Factor for the logistic model
 vif_vals <- car::vif(glm(Diagnosis ~ Age + Gender + FamilyHistoryAlzheimers +
                            HeadInjury + MMSE + FunctionalAssessment,
                          data = data, family = binomial))
 print(vif_vals)
+# There are no outliers in numeric data
 
 numeric_vars <- data %>% 
   select_if(is.numeric)
@@ -136,9 +124,6 @@ corrplot(cor_matrix,
          title = "Correlation Matrix of Numerical Variables",
          mar = c(0, 0, 2, 0))
 
-
-
-
 # Check for outliers before deciding on transformations
 data %>%
   select_if(is.numeric) %>%
@@ -160,12 +145,174 @@ data %>%
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+# Prep data for corr matrix
+corr_df <- data %>% 
+  mutate(Diagnosis = as.numeric(as.character(Diagnosis))) %>% 
+  mutate(across(where(is.factor), ~ as.numeric(as.character(.))))
+
+# Correlation matrix of all predictors against AD column
+corr_mat <- cor(corr_df, use = "pairwise.complete.obs")
+
+# Tidy to long form for ggplot
+corr_long <- as.data.frame(corr_mat) %>% 
+  rownames_to_column("Var1") %>% 
+  pivot_longer(-Var1, names_to = "Var2", values_to = "r")
+
+# Correlation heatmap for the matrix above
+ggplot(corr_long, aes(Var1, Var2, fill = r)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", r)), size = 2.5) +
+  scale_fill_gradient2(
+    low  = "lightblue",
+    mid  = "white",
+    high = "red",
+    midpoint = 0, limits = c(-1, 1), name = "r"
+  ) +
+  labs(title = "Correlation heat-map – all variables incl. Alzheimer Diagnosis",
+       x = NULL, y = NULL) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid  = element_blank()
+  )
+# From this plot we see that MMSE, ADL and FunctionalAssessment show the strongest (absolute) correlations with Diagnosis, followed by SleepQuality and CholesterolHDL. We therefore follow up withformal group-difference tests on all predictors.
+
+
+
+
+numerical_vars <- data %>%
+  select_if(is.numeric) %>%
+  names()
+
+# t-test for numeric predictors
+t_tbl <- map_dfr(numerical_vars, function(v){
+  
+  # Perform two-sample t-test comparing groups Diagnosis=0 vs Diagnosis=1 for variable v
+  res <- t.test(data[[v]] ~ data$Diagnosis)
+  
+  # build a one-row tibble summarizing the t-test results for this variable
+  tibble(
+    Variable   = v, # name of the predictor
+    Test       = "t‑test",# t-test
+    
+    # (difference in group means (AD - nonAD)) / (standard error of that difference)
+    # SE is mean in difference of values if we took the same test many more times
+    Statistic  = round(res$statistic, 3),
+    p_value    = round(res$p.value , 5), # statistical significance
+    Significant= ifelse(res$p.value < .05, "Yes", "No") # flag if p < 0.05
+  )
+})
+
+factor_metrics <- data %>%
+  select_if(is.factor) %>%
+  names()
+
+# Chi-square test for categorical predictors
+chi_tbl <- map_dfr(factor_metrics, function(v){
+  
+  # perform chi-square test on contingency table of v vs Diagnosis
+  res <- chisq.test(table(data[[v]], data$Diagnosis))
+  # build a one-row tibble summarizing the chi-square test results for this variable
+  tibble(
+    Variable   = v, # name of the predictor
+    Test       = "χ²", # chi-square test
+    
+    # (difference in group means (AD - nonAD)) / (standard error of that difference)
+    # SE is mean in difference of values if we took the same test many more times
+    Statistic  = round(res$statistic, 3),
+    p_value    = round(res$p.value , 5), # statistical significance
+    Significant= ifelse(res$p.value < .05, "Yes", "No") # flag if p < 0.05
+  )
+})
+
+# Combine both result tables & sort by p-value
+test_results <- bind_rows(t_tbl, chi_tbl) %>% 
+                arrange(p_value)
+print(test_results)
+
+# Conclusion:
+# -MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment all show extremely low p-values (0), indicating highly significant group differences. They are strong numeric predictors.
+# -SleepQuality (p = 0.0087) and CholesterolHDL (p = 0.049) semm to be also significant.
+# -All other tests have p > 0.05, so no strong evidence.
+# --MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment, then consider SleepQuality & CholHDL in models as they also displayed p-values < 0.05.
+
+
+# Visualizing the significant predictors by Diagnosis
+# These boxplots and barplots illustrate the distribution of each variable in the No-AD (0) vs AD (1) groups, confirming the statistical differences we observed in the t-tests and chi-square tests.
+
+ggplot(data, aes(x = Diagnosis, y = MMSE, fill = Diagnosis)) +
+  geom_boxplot() +
+  labs(title = "MMSE vs. Diagnosis", 
+       x = "Diagnosis", 
+       y = "MMSE value") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
+
+ggplot(data, aes(x = Diagnosis, y = ADL, fill = Diagnosis)) +
+  geom_boxplot() +
+  labs(title = "ADL vs. Diagnosis", 
+       x = "Diagnosis", 
+       y = "ADL value") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
+
+ggplot(data, aes(x = Diagnosis, y = FunctionalAssessment, fill = Diagnosis)) +
+  geom_boxplot() +
+  labs(title = "FunctionalAssessment vs. Diagnosis", 
+       x = "Diagnosis", 
+       y = "FunctionalAssessment value") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
+
+ggplot(data, aes(x = MemoryComplaints, fill = Diagnosis)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(labels = c("No complaint","Complaint")) +
+  labs(title = "Memory complaints by AD status",
+       x = "Memory complaints",
+       y = "Count") +
+  theme_minimal()
+
+ggplot(data, aes(x = BehavioralProblems, fill = Diagnosis)) +
+  geom_bar(position = "fill") +
+  scale_x_discrete(labels = c("No problems","Problems")) +
+  labs(title = "Behavioral problems by AD status",
+       x = "Behavioral problems",
+       y = "Count") +
+  theme_minimal()
+
+ggplot(data, aes(x = Diagnosis, y = CholesterolHDL, fill = Diagnosis)) +
+  geom_boxplot() +
+  labs(title = "CholesterolHDL vs. Diagnosis", 
+       x = "Diagnosis", 
+       y = "CholesterolHDL value") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
+
+ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
+  geom_boxplot() +
+  labs(title = "SleepQuality vs. Diagnosis", 
+       x = "Diagnosis", 
+       y = "SleepQuality value") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
+
+
 # EDA findings
 # -No missing values in any column -> no imputation ( substituting missing data with a different value) needed
-# -Slight diagnosis imbalance (65 % negative, 35 % positive) -> we will most likely adjust probability threshold to avoid bias
+# -Slight diagnosis imbalance (65 % negative, 35 % positive) -> we will most likely adjust probability threshold to avoid bias or choose models which can work with this inequality
 # -Numeric attributes - mostly uniform -> we keep all rows and skip outlier deletion
 # -Categorical factors - most are highly imbalanced with the 0 level dominant
-# -- Conclusion - data quality and distributions are suitable for the planned logistic and tree/forest models. No transformations or outlier removals are mandated at this stage.
+# –Correlation heatmap shows strongest associations with Diagnosis for MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment, moderate for SleepQuality and HDL.
+# –Categorical predictors mostly skewed to 0 level. Several (MemoryComplaints, BehavioralProblems) still show enough positives to use in models.
+# Overall: the dataset is clean, and meets key modeling prerequisites. No further EDA-level fixes are required before moving to formal hypothesis creation/testing & model fitting.
+
+
+################################################################################
+############################ Hypothesis formulation ############################
+################################################################################
+# H0: The classification performance (e.g. AUC) of the base model built on MMSE, FunctionalAssessment, ADL, MemoryComplaints and BehavioralProblems is yealds little no none performance increase when we add the composite LRI. There is no gain from including the lifestyle index.
+
+# H1: Adding the composite LRI to that core five-variable model produces a significant increase in classification performance (e.g. AUC).
 
 
 
