@@ -3,7 +3,7 @@
 ################################################################################
 library(tidyverse)
 library(tidymodels)
-library(ggplot2)
+#library(ggplot2)
 library(magrittr)
 library(caret)
 library(gridExtra)
@@ -12,20 +12,14 @@ library(pROC)
 library(corrplot)
 library(ggmosaic)
 library(dplyr)
-library(ggcorrplot)
 library(MASS)
-library(randomForest)
-library(infotheo)  # MI
-library(entropy)   # MI
-library(rpart)
-library(rpart.plot)
 library(patchwork) # combining plots
-library(lmtest) # Breusch-Pagan test for homoscedasticity
 library(car)    # Levene's test for homoscedasticit
 library(latexpdf)
 library(rsample)  
 library(purrr)
-
+library(gbm)
+#library(shiny)
 
 getwd()
 data <- read.csv("alzheimers_disease_data.csv")
@@ -37,7 +31,7 @@ data <- read.csv("alzheimers_disease_data.csv")
 ################################################################################
 # Drop pointless columns like the DoctorInCharge since it is empty and no use to us and PatientID.
 data <- data %>% dplyr::select(-DoctorInCharge, -PatientID)
-
+data_numeric <- data
 #Manual look at data
 str(data)     # general info about columns (type...)
 summary(data) # info about each column (min, max, median...)
@@ -70,7 +64,11 @@ for (col_name in names(data)) {
   }
 }
 
-num_cols <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
+numeric_attrs_names <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
+factor_attrs_names <- data %>%  select_if(is.factor) %>% names()
+
+numeric_attrs <- data %>% select_if(is.numeric)
+factor_attrs <- data %>% select_if(is.factor)
 
 detect_outliers <- function(column) {
   q1 <- quantile(column, 0.25, na.rm = TRUE)
@@ -80,18 +78,14 @@ detect_outliers <- function(column) {
   upper_bound <- q3 + 1.5 * iqr
   return(column < lower_bound | column > upper_bound)
 }
-
-# Apply to each numeric column and report
-outlier_summary <- sapply(num_cols, function(colname) {
+outlier_summary <- sapply(numeric_attrs_names, function(colname) {
   sum(detect_outliers(data[[colname]]), na.rm = TRUE)
 })
-
-# Convert to data frame for easier viewing
 outlier_df <- data.frame(Variable = names(outlier_summary),
                          Outlier_Count = as.integer(outlier_summary))
-
 print(outlier_df)
 
+# TODO: toto az do vyhodnocovania modelu, vymazat, ale pozor lebo to je nizsie pouzita premenna
 # VIF (Variance Inflation Factor for the logistic model
 vif_vals <- car::vif(glm(Diagnosis ~ Age + Gender + FamilyHistoryAlzheimers +
                            HeadInjury + MMSE + FunctionalAssessment,
@@ -99,32 +93,15 @@ vif_vals <- car::vif(glm(Diagnosis ~ Age + Gender + FamilyHistoryAlzheimers +
 print(vif_vals)
 # There are no outliers in numeric data
 
-numeric_vars <- data %>% 
-  select_if(is.numeric)
 #' Normality
-normality_p_values <- apply(numeric_vars, 2, function(x) {
+normality_p_values <- apply(numeric_attrs, 2, function(x) {
   shapiro.test(x)$p.value
 })
 print(sort(normality_p_values, decreasing = T))
 # P-values < 0.05 suggest a deviation from normality. Consider transformations if needed.
 # we can observe that none or numeric attributes in normally distributed.
 
-# Correlation for numeric variables
-# TODO: enhance this for all keeping just the triangle- note vars are factorized 
-# therefore not working.
-cor_matrix <- cor(numeric_vars, use = "complete.obs")
-corrplot(cor_matrix, 
-         method = "color", 
-         type = "upper", 
-         order = "hclust",
-         tl.col = "black", 
-         tl.cex = 0.7,
-         addCoef.col = "black",
-         number.cex = 0.5,
-         title = "Correlation Matrix of Numerical Variables",
-         mar = c(0, 0, 2, 0))
 
-# Check for outliers before deciding on transformations
 data %>%
   select_if(is.numeric) %>%
   pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
@@ -134,31 +111,47 @@ data %>%
   labs(title = "Histograms of Numerical Attributes", x = "Value", y = "Frequency") +
   theme_minimal()
 
-# Check for categorical distributions
-data %>%
-  select_if(is.factor) %>%
-  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
-  ggplot(aes(x = value, fill = value)) +
-  geom_bar() +
+numeric_data <- bind_cols(numeric_attrs, Diagnosis = data$Diagnosis)
+numeric_long <- numeric_data %>%
+  pivot_longer(-Diagnosis, names_to = "variable", values_to = "value")
+ggplot(numeric_long, aes(x = value, fill = Diagnosis)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  labs(title = "Density Plots of Numeric Variables by Diagnosis",
+       x = "Value", y = "Density") +
+  theme_minimal()
+
+# Yet another one visualization, now density functions with respect to Diagnosis results
+
+
+factor_data <- data %>%
+  select_if(is.factor)
+
+factor_data <- factor_data %>%
+  dplyr::select(-EducationLevel, -Ethnicity)
+
+factor_data %>%
+  pivot_longer(-Diagnosis, names_to = "variable", values_to = "value") %>%
+  group_by(Diagnosis, variable, value) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(Diagnosis, variable) %>%
+  mutate(percentage = count / sum(count)) %>%
+  ggplot(aes(x = value, y = percentage, fill = Diagnosis)) +
+  geom_bar(stat = "identity", position = "dodge") +
   facet_wrap(~ variable, scales = "free_x") +
-  labs(title = "Bar Plots of Factor Attributes", x = "Category", y = "Count") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Percentage Distribution by Diagnosis",
+       x = "Category", y = "Percentage") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-# Prep data for corr matrix
-corr_df <- data %>% 
-  mutate(Diagnosis = as.numeric(as.character(Diagnosis))) %>% 
-  mutate(across(where(is.factor), ~ as.numeric(as.character(.))))
+# Here we can see ratios/proportions for categoricals 
 
-# Correlation matrix of all predictors against AD column
-corr_mat <- cor(corr_df, use = "pairwise.complete.obs")
 
-# Tidy to long form for ggplot
+corr_mat <- cor(data_numeric, use = "pairwise.complete.obs")
 corr_long <- as.data.frame(corr_mat) %>% 
   rownames_to_column("Var1") %>% 
   pivot_longer(-Var1, names_to = "Var2", values_to = "r")
-
-# Correlation heatmap for the matrix above
 ggplot(corr_long, aes(Var1, Var2, fill = r)) +
   geom_tile(color = "white") +
   geom_text(aes(label = sprintf("%.2f", r)), size = 2.5) +
@@ -179,13 +172,8 @@ ggplot(corr_long, aes(Var1, Var2, fill = r)) +
 
 
 
-
-numerical_vars <- data %>%
-  select_if(is.numeric) %>%
-  names()
-
 # t-test for numeric predictors
-t_tbl <- map_dfr(numerical_vars, function(v){
+t_tbl <- map_dfr(numeric_attrs_names, function(v){
   
   # Perform two-sample t-test comparing groups Diagnosis=0 vs Diagnosis=1 for variable v
   res <- t.test(data[[v]] ~ data$Diagnosis)
@@ -203,12 +191,8 @@ t_tbl <- map_dfr(numerical_vars, function(v){
   )
 })
 
-factor_metrics <- data %>%
-  select_if(is.factor) %>%
-  names()
-
 # Chi-square test for categorical predictors
-chi_tbl <- map_dfr(factor_metrics, function(v){
+chi_tbl <- map_dfr(factor_attrs_names[factor_attrs_names!="Diagnosis"], function(v){
   
   # perform chi-square test on contingency table of v vs Diagnosis
   res <- chisq.test(table(data[[v]], data$Diagnosis))
@@ -229,6 +213,12 @@ chi_tbl <- map_dfr(factor_metrics, function(v){
 test_results <- bind_rows(t_tbl, chi_tbl) %>% 
                 arrange(p_value)
 print(test_results)
+
+predictors <- c(
+  "ADL", "MemoryComplaints", "BehavioralProblems",
+  "MMSE", "FunctionalAssessment",
+  "CholesterolHDL", "SleepQuality"
+)
 
 # Conclusion:
 # -MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment all show extremely low p-values (0), indicating highly significant group differences. They are strong numeric predictors.
@@ -339,13 +329,6 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 #
 # These four (GLM, LDA, Tree, RF) will be evaluated against the dataset
 
-candidate_models <- c("Logistic GLM",
-                      "LDA",
-                      "Decision Tree",
-                      "Random Forest")
-
-# R-2  Model–requirement matrix
-
 # Dataset stats computed in EDA
 outcome_binary <- (length(unique(data$Diagnosis)) == 2)
 mixed_types <- any(sapply(data, is.factor)) & any(sapply(data, is.numeric))
@@ -418,54 +401,12 @@ cat("\nKey stats → EPV =", epv,
 
 
 
-# Verify that Age, MMSE and FunctionalAssessment are approximately linearly related to the log-odds of Alzheimer’s (GLM assumption)
-pred_vars <- c("Age", "MMSE", "FunctionalAssessment") # predictors to inspect
-
-# Plot empirical logit for one variable 
-emp_logit_plot <- function(df, xvar){
-  tmp <- df %>% 
-    
-    # Slice predictor into 10 equal-width bins
-    mutate(bin = cut(.data[[xvar]], breaks = 10)) %>% 
-    group_by(bin) %>%
-    
-    summarise(
-      # Compute bin midpoint
-      mid = mean(.data[[xvar]]),
-      # Diagnosis was converted to factor earlier, so turn back to 0/1
-      pr  = (sum(as.numeric(as.character(Diagnosis))) + 0.5) / (n() + 1)
-    ) %>% ungroup()
-  
-  # Scatter plot
-  ggplot(tmp, aes(mid, log(pr/(1 - pr)))) +
-    geom_point() +
-    geom_smooth(method = "loess", se = FALSE, span = 1) +
-    labs(title = paste("Empirical logistic -", xvar),
-         # logistic(Pr(AD)) = models the log-odds of an event
-         x = xvar, y = "logistic(Pr(AD))") +
-    theme_minimal()
-}
-
-# Generate one plot per numeric predictor
-for(v in pred_vars) print(emp_logit_plot(data, v))
-
-
-# Results:
-# Age                
-#  Log-odds form a shallow U-shape: decrease up to ~70 y, flatten, then rise.
-
-# MMSE
-#  –Flat until ~12 points, then steep drop – strong non-linearity at low scores.
-
-# FunctionalAssessment
-#  –Smooth monotonic decline but still curved – mild non-linearity.
-
 
 
 ################################################################################
 ############################# 5. Data Spending #################################
 ################################################################################
-# We pick one yechnique that: 
+# We pick one technique that: 
 #  -Gives reliable performance estimates for our dataset  
 #  -Keeps the 65 / 35 class ratio in every split  
 #  -Is light-weight to run GLM, Tree and RF models repeatedly
@@ -496,80 +437,47 @@ print(cv_splits)
 
 
 
+# Set up a consistent cross-validation strategy (e.g., 5-fold CV)
+cv_consistent <- trainControl(method = "cv", number = 5)
 
+# Choose a model (logistic regression)
+model_type <- "glm"
 
+# Train the model with the consistent CV strategy
+set.seed(123)
+model_5_fold <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy")
+cv_consistent <- trainControl(method = "cv", number = 10)
 
+set.seed(123)
+model_10_fold_SIMPLIFIED <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy") # Using same CV
 
+set.seed(123)
+model_stratified_5_fold_SIMPLIFIED <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy") # Using same CV
 
+# LOOCV has a different number of resamples (equal to the number of data points),
+# so it's best to exclude it from direct comparison with k-fold CV in resamples()
+# model_loocv <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy")
 
-ggplot(data, aes(x = Gender, fill = Diagnosis)) +
-  geom_bar(position = "dodge") +
-  labs(title = "Gender vs. Diagnosis", x = "Gender", y = "Count") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("Male", "Female"))
-#' no significant change there
+set.seed(123)
+model_repeated_cv_SIMPLIFIED <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy") # Using same CV
 
-ggplot(data, aes(x = Diagnosis, y = Age, fill = Diagnosis)) +
-  geom_boxplot() +
-  labs(title = "Age vs. Diagnosis", x = "Diagnosis", y = "Age") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
-#' no significant change there
+set.seed(123)
+model_shuffle_split_SIMPLIFIED <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy") # Using same CV
 
+# Compare the results of models trained with the SAME number of resamples
+results_comparison <- resamples(list(
+  `5-Fold CV` = model_5_fold,
+  `10-Fold CV (Simplified)` = model_10_fold_SIMPLIFIED,
+  `Stratified 5-Fold CV (Simplified)` = model_stratified_5_fold_SIMPLIFIED,
+  # `LOOCV` = model_loocv, # Excluding LOOCV for now due to different resample number
+  `Repeated CV (Simplified)` = model_repeated_cv_SIMPLIFIED,
+  `Shuffle-Split (Simplified)` = model_shuffle_split_SIMPLIFIED
+))
 
-ggplot(data, aes(x = Smoking, fill = Diagnosis)) +
-  geom_bar(position = "dodge") +
-  labs(title = "Smoking vs. Diagnosis", x = "Smoking", y = "Count") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("No", "Yes")) # Assuming 0=No, 1=Yes
+summary(results_comparison)
 
-ggplot(data, aes(x = Diagnosis, y = PhysicalActivity, fill = Diagnosis)) +
-  geom_boxplot() +
-  labs(title = "Physical Activity vs. Diagnosis", x = "Diagnosis", y = "Physical Activity (hours/week)") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
-
-ggplot(data, aes(x = Diagnosis, y = DietQuality, fill = Diagnosis)) +
-  geom_boxplot() +
-  labs(title = "Diet Quality vs. Diagnosis", x = "Diagnosis", y = "Diet Quality (score 0-10)") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
-
-ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
-  geom_boxplot() +
-  labs(title = "Sleep Quality vs. Diagnosis", x = "Diagnosis", y = "Sleep Quality (score 4-10)") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
-#' there is a slight difference
-
-
-ggplot(data, aes(x = Diagnosis, y = BMI, fill = Diagnosis)) +
-  geom_boxplot() +
-  labs(title = "BMI vs. Diagnosis", x = "Diagnosis", y = "BMI") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
-
-ggplot(data, aes(x = Diagnosis, y = MMSE, fill = Diagnosis)) +
-  geom_boxplot() +
-  labs(title = "MMSE vs. Diagnosis", x = "Diagnosis", y = "MMSE Score") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
-#' this is MMSE (Cognitive Assessment), it appears to be a predictor on which
-#' diagnosis depends the most so far.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# Visualize the performance distributions
+dotplot(results_comparison, metric = "Accuracy")
 
 
 
@@ -580,88 +488,14 @@ ggplot(data, aes(x = Diagnosis, y = MMSE, fill = Diagnosis)) +
 # Goal is to keep only variables needed for the hypothesis + create a trimmed data frame for modelling
 
 # Keep only variables required by the hypothesis
-core_vars <- c(
+core_vars <- c(predictors, 
   "Diagnosis",
   # non-modifiable risk factors
   "Age", "Gender", "FamilyHistoryAlzheimers", "HeadInjury",
-  # baseline cognitive status
-  "MMSE", "FunctionalAssessment",
   # lifestyle components
-  "PhysicalActivity", "DietQuality", "SleepQuality",
+  "PhysicalActivity", "DietQuality",
   "Smoking", "AlcoholConsumption", "BMI"
 )
-
-
-#' Perform t-tests to compare means between diagnosis groups - 
-#' draw conslusion from statistics now instead of visual boxplots 
-
-
-
-categorical_vars <- c("Gender", "Ethnicity", "EducationLevel", "Smoking", 
-                      "FamilyHistoryAlzheimers", "CardiovascularDisease", 
-                      "Diabetes", "Depression", "Diagnosis")
-
-health_metrics <- c("BMI", "SystolicBP", "DiastolicBP", "CholesterolTotal", 
-                    "CholesterolLDL", "CholesterolHDL", "MMSE", "FunctionalAssessment", 
-                    "SleepQuality")
-
-
-t_test_results <- data.frame(
-  Metric = character(),
-  t_statistic = numeric(),
-  p_value = numeric(),
-  significant = character(),
-  stringsAsFactors = FALSE
-)
-for (metric in health_metrics) {
-  t_result <- t.test(formula(paste(metric, "~ Diagnosis")), data = data)
-  
-  t_test_results <- rbind(t_test_results, data.frame(
-    Metric = metric,
-    t_statistic = round(t_result$statistic, 3),
-    p_value = round(t_result$p.value, 5),
-    significant = ifelse(t_result$p.value < 0.05, "Yes", "No"),
-    stringsAsFactors = FALSE
-  ))
-}
-
-print(t_test_results)
-
-key_corr_vars <- c("Age", "BMI", "MMSE", "FunctionalAssessment", 
-                   "SystolicBP", "DiastolicBP", "CholesterolTotal", 
-                   "PhysicalActivity", "AlcoholConsumption")
-
-# Chi-square tests for categorical variables vs Diagnosis
-chi_test_results <- data.frame(
-  Variables = character(),
-  chi_square = numeric(),
-  p_value = numeric(),
-  significant = character(),
-  stringsAsFactors = FALSE
-)
-
-cat_vars <- c("Gender", "Ethnicity", "EducationLevel", "Smoking", 
-              "FamilyHistoryAlzheimers", "CardiovascularDisease", 
-              "Depression", "HeadInjury", "MemoryComplaints",
-              "BehavioralProblems", "Confusion", "Disorientation",
-              "PersonalityChanges", "DifficultyCompletingTasks", "Forgetfulness")
-
-for (var in cat_vars) {
-  chi_result <- chisq.test(data[[var]], data$Diagnosis)
-  
-  chi_test_results <- rbind(chi_test_results, data.frame(
-    Variables = paste(var, "vs Diagnosis"),
-    chi_square = round(chi_result$statistic, 3),
-    p_value = round(chi_result$p.value, 5),
-    significant = ifelse(chi_result$p.value < 0.05, "Yes", "No"),
-    stringsAsFactors = FALSE
-  ))
-}
-
-print(chi_test_results)
-
-
-
 
 data_hyp <- data %>% dplyr::select(all_of(core_vars))
 
@@ -689,124 +523,172 @@ data_hyp <- data_hyp %>%
   ) %>% 
   drop_na()
 
+
+
+
+
+
+
+
+
 ################################################################################
 ################################ Hypothesis test ###############################
 ################################################################################
 # H1: Higher LRI = higher odds of Alzheimer.
 
+
+# Split dataset into training and testing sets
+set.seed(235455)
+train_index <- createDataPartition(data_numeric$Diagnosis, p = 0.7, list = FALSE)
+train_data <- data_numeric[train_index, ]
+test_data  <- data_numeric[-train_index, ]
+
+# Fit logistic regression model
 model_primary <- glm(
-  Diagnosis ~ LRI +                                        # predictor
-    Age + Gender + FamilyHistoryAlzheimers + HeadInjury +  # non-modifiable risk
-    MMSE + FunctionalAssessment,                           # cognitive status
-  data   = data_hyp,
+  Diagnosis ~ .,
+  data = train_data[, c("Diagnosis", predictors)],
   family = binomial
 )
 
-# Summarise regression
 summary(model_primary)
-
-
+  
 model_secondary <- glm(
-  Diagnosis ~ MMSE + FunctionalAssessment,
-  data   = data_hyp,
+  Diagnosis ~ .,
+  data = train_data[, c("Diagnosis", predictors[!predictors %in% c("CholesterolHDL", "SleepQuality")])],
   family = binomial
 )
 
 summary(model_secondary)
 
+
+# Compare models
 AIC(model_primary, model_secondary)
-# AIC index shows that priamry/first model even having more variables is better.
+# AIC index shows that priamry/first model is slightly better, so we continue with primary model.
 
 # Multicolinearity
-vif(model_secondary)
 vif(model_primary)
-# VIF values are < 5 therefore not multicolinearity detected.
+# VIF values are < 5 therefore no multicolinearity is detected.
 
+# TODO: keep this ? know how to explain it ?
 # Convert log-odds to odds-ratios
 exp(cbind(OR = coef(model_primary),   # exponentiate → odds ratios
           confint(model_primary)))    # 95 % CIs for interpretation
 
 library(leaps)
-m1_fit <- regsubsets(Diagnosis~ LRI +
-                       Age + Gender + FamilyHistoryAlzheimers + HeadInjury +
-                       MMSE + FunctionalAssessment, data=data_hyp)
-summary(m1_fit)
+combination_models <- regsubsets(Diagnosis ~ .,
+                     data = train_data[, c("Diagnosis", predictors)])
+summary(combination_models)
 
 # This resulting tables shows best combination of predictors for N number of
 # predictors e.g. if we want just 1 - we pick FunctionalAssessment, for 2 predictors
-# we pick FunctionalAssessment and MMSE, and for 3 we pick
-# FunctionalAssessment, MMSE and FamilyHistoryAlzheimers1
+# we pick FunctionalAssessment and MemoryComplaints, and for 3 we pick
+# FunctionalAssessment, MemoryComplaints and ADL, ...
 
 
-
-#' Stepwise Selection to identify key predictors
-#step_model <- stepAIC(full_model, direction = "both", trace = FALSE)
-#final_formula <- formula(step_model)
-#print("Variables selected by stepwise selection:")
-#print(final_formula)
-
-
-
-
-
-
-
-
-
-
-
-# Step 2: Split dataset into training and testing sets
-set.seed(123)
-train_index <- createDataPartition(data_hyp$Diagnosis, p = 0.7, list = FALSE)
-train_data <- data_hyp[train_index, ]
-test_data  <- data_hyp[-train_index, ]
-
-# Step 3: Fit logistic regression model
-model_primary <- glm(
-  Diagnosis ~ LRI + Age + Gender + FamilyHistoryAlzheimers + HeadInjury + MMSE + FunctionalAssessment,
-  data = train_data,
-  family = binomial
-)
-
-summary(model_primary)  # Optional: check summary
-
-# Step 4: Predict probabilities on test set
+# Predict probabilities on test set
 test_probs <- predict(model_primary, newdata = test_data, type = "response")
 
-# Step 5: ROC analysis
-roc_obj <- roc(test_data$Diagnosis, test_probs)
-auc_val <- auc(roc_obj)
-cat("AUC:", round(auc_val, 3), "\n")
+# ROC analysis
+roc_obj_primary <- roc(test_data$Diagnosis, test_probs)
+auc_primary <- auc(roc_obj)
+cat("AUC:", round(auc_primary, 3), "\n")
 
 # Step 6: Get optimal threshold (Youden's J)
-coords_obj <- coords(roc_obj, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
-optimal_threshold <- coords_obj["threshold"]
-optimal_threshold
+coords_obj_primary <- coords(roc_obj_primary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
+optimal_threshold_primary <- coords_obj_primary["threshold"]
+optimal_threshold_primary
 
 # Step 7: Confusion matrix - threshold 0.5
 preds_default <- factor(ifelse(test_probs > 0.5, 1, 0), levels = c(0, 1))
-conf_matrix_default <- confusionMatrix(preds_default, test_data$Diagnosis, positive = "1")
+conf_matrix_default <- confusionMatrix(preds_default, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Threshold 0.5):\n")
 print(conf_matrix_default)
 
-# Step 8: Confusion matrix - optimal threshold
-#preds_optimal <- factor(ifelse(test_probs > optimal_threshold, 1, 0), levels = c(0, 1))
-#conf_matrix_optimal <- confusionMatrix(preds_optimal, test_data$Diagnosis, positive = "1")
-#cat("\nConfusion Matrix (Optimal Threshold):\n")
-#print(conf_matrix_optimal)
+optimal_threshold_primary
+# Confusion matrix - optimal threshold
+preds_optimal <- factor(ifelse(test_probs > 0.4381873, 1, 0), levels = c(0, 1))
+conf_matrix_optimal <- confusionMatrix(preds_optimal, as.factor(test_data$Diagnosis), positive = "1")
+cat("\nConfusion Matrix (Optimal Threshold):\n")
+print(conf_matrix_optimal)
 
-# Step 9: Plot ROC curve with optimal threshold marked
-plot(roc_obj, main = "ROC Curve: Logistic Regression", col = "blue", lwd = 2)
-points(1 - coords_obj["specificity"], coords_obj["sensitivity"], pch = 19, col = "red")
-text(1 - coords_obj["specificity"], coords_obj["sensitivity"],
-     labels = paste("Threshold =", round(optimal_threshold, 2)), pos = 4, col = "red")
+# --- Visualize Confusion Matrices
+create_cm_df <- function(cm, model_name) {
+  as.data.frame(cm$table) %>%
+    mutate(Model = model_name)
+}
+
+cm_df_primary_default <- create_cm_df(conf_matrix_default, "Primary (Th=0.5)")
+cm_df_primary_optimal <- create_cm_df(conf_matrix_optimal, "Primary (Th=0.4381873)")
+
+cm_df_primary <- rbind(cm_df_primary_default, cm_df_primary_optimal)
+
+ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 5) +
+  scale_fill_gradient(low = "lightblue", high = "steelblue") +
+  facet_wrap(~ Model) +
+  labs(title = "Confusion Matrices - Primary Model", fill = "Count") +
+  theme_minimal() +
+  theme(aspect.ratio = 1)
 
 
 
 
+# Predict probabilities on test set for secondary model
+test_probs_secondary <- predict(model_secondary, newdata = test_data, type = "response")
+
+# ROC analysis for secondary model
+roc_obj_secondary <- roc(test_data$Diagnosis, test_probs_secondary)
+auc_secondary <- auc(roc_obj_secondary)
+cat("AUC (Secondary Model):", round(auc_primary, 3), "\n")
+cat("AUC (Secondary Model):", round(auc_secondary, 3), "\n")
+
+# Here secondary model has slightly bigger auc.
+
+# Optimal threshold (Youden's J) for secondary model
+coords_obj_secondary <- coords(roc_obj_secondary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
+optimal_threshold_secondary <- coords_obj_secondary["threshold"]
+optimal_threshold_secondary
+
+# --- Visualize ROC Curves ---
+roc_df_primary <- data.frame(
+  fpr = 1 - roc_obj_primary$specificities,
+  tpr = roc_obj_primary$sensitivities,
+  model = "Primary Model"
+)
+
+roc_df_secondary <- data.frame(
+  fpr = 1 - roc_obj_secondary$specificities,
+  tpr = roc_obj_secondary$sensitivities,
+  model = "Secondary Model"
+)
+
+roc_df_combined <- rbind(roc_df_primary, roc_df_secondary)
 
 
 
+ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
+  geom_line(linewidth = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey") +
+  
+  # Add vertical and horizontal lines for primary threshold
+  geom_vline(xintercept = 1 - coords_obj_primary$specificity, color = "blue", linetype = "dotted") +
+  geom_hline(yintercept = coords_obj_primary$sensitivity, color = "blue", linetype = "dotted") +
+  
+  # Add vertical and horizontal lines for secondary threshold
+  geom_vline(xintercept = 1 - coords_obj_secondary$specificity, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = coords_obj_secondary$sensitivity, color = "red", linetype = "dotted") +
+  
+  labs(
+    title = "Comparison of ROC Curves",
+    x = "False Positive Rate (1 - Specificity)",
+    y = "True Positive Rate (Sensitivity)",
+    color = "Model"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC (Primary) =", round(auc_primary, 3)), color = "blue") +
+  annotate("text", x = 0.75, y = 0.20, label = paste("AUC (Secondary) =", round(auc_secondary, 3)), color = "red")
 
 
 
@@ -861,203 +743,117 @@ text(1 - coords_obj["specificity"], coords_obj["sensitivity"],
 # -formula_or_data (for GLM we need a formula, for tree models we ignore it)
 # -data (must contain predictors and diagnosis)
 
-evaluate_model <- function(model_type = c("glm", "rpart", "rf"),
-                           formula_or_data, data){
-  # For inner peace
-  model_type <- match.arg(model_type) # ensure the supplied string is valid
-  set.seed(65778275)                  # reproducibility
-  
-  # Make folds. Keeps class distribution equal-ish in each fold
-  # k value can be experimented with
-  folds <- createFolds(data$Diagnosis, k = 10)
-  
-  # Var for fold statistics
-  cv_res <- data.frame(Accuracy = numeric(),
-                       Sensitivity = numeric(),
-                       Specificity = numeric(),
-                       AUC = numeric())
-  
-  # Cross validation loop for index in folds
-  for(idx in folds){
-    # train set = all rows not in current fold -> model learns here
-    # test set = current fold -> model is evaluated on unseen data
-    train <- data[-idx, ]
-    test <- data[idx, ]
-    
-    # Fit model
-    # switch() chooses the fitting code block based on model_type
-    fit <- switch(model_type,
-                  glm = glm(formula_or_data, 
-                            data = train, 
-                            family = binomial), # (0 = No AD, 1 = AD)
-                  
-                  rpart = rpart(Diagnosis ~ ., 
-                                data = train, 
-                                method = "class", # use classification
-                                xval = 0,         # disable build in 10x (we use 10 fold)
-                                cp = 0.01),       # shallow base -> tune later!
-                  
-                  rf = randomForest(Diagnosis ~ ., 
-                                    data = train,
-                                    ntree = 500,        # pretty value, can be experimented with
-                                    importance = TRUE)) # for feature importance plot
-    
-    # Predict probabilities on test data
-    if(model_type == "glm"){
-      prob <- predict(fit, test, type = "response") # numeric
-    } else if (model_type == "rpart") {
-      pmat <- predict(fit, test, type = "prob")
-      
-      # if the training fold had no positives, pmat has only column "0" -> resulting in error
-      prob <- if ("1" %in% colnames(pmat)) pmat[, "1"] else rep(0, nrow(test))
-    } else {# random-forest
-      
-      pmat <- predict(fit, test, type = "prob")
-      prob <- pmat[, "1"]
-    }
-    # Convert probs to class labels using the canonical 0.5 cut-off
-    # If value is >0.5 its 1 otherwise its 0
-    pred <- factor(ifelse(prob > 0.5, 1, 0), levels = c(0,1))
-    
-    # Compute fold metrics
-    # test$Diagnosis -> observed class values for this test split
-    cm  <- confusionMatrix(pred, test$Diagnosis, positive = "1")
-    
-    # as.numeric produces either 1 or 2 so we substract 1 to get 0/1 -> roc need 0/1 values
-    roc <- roc(as.numeric(test$Diagnosis) - 1, prob)
-    
-    # Store this fold’s metrics in cv_res
-    cv_res <- rbind(cv_res, data.frame(
-      Accuracy    = cm$overall["Accuracy"],    # (TP + TN) / total
-      Sensitivity = cm$byClass["Sensitivity"], # TP / (TP + FN)
-      Specificity = cm$byClass["Specificity"], # TN / (TN + FP)
-      AUC         = auc(roc)
-    ))
-  }
-  # Return mean metrics across the 10 folds
-  colMeans(cv_res)
-}
-# Decision-tree (rpart) 
-dt_metrics <- evaluate_model("rpart", NULL, data_hyp)
-print(dt_metrics)
-
-# Visualise the tree
-dt_model <- rpart(Diagnosis ~ ., data = data_hyp, method = "class",
-                  xval = 10, cp = 0.01)
-rpart.plot(dt_model, type = 3, extra = 104,
-           main = "Decision Tree for Alzheimer Diagnosis")
-
-# Random-Forest
-rf_metrics <- evaluate_model("rf", NULL, data_hyp)
-print(rf_metrics)
-
-# Variable-importance plot
-N_top <- 15 # N with most impact
-set.seed(65778275)
-rf_full <- randomForest(Diagnosis ~ ., data = data_hyp,
-                        ntree = 500, importance = TRUE)
-varImp <- importance(rf_full)[, "MeanDecreaseGini", drop = FALSE] %>%
-  as.data.frame() %>%
-  rownames_to_column("Variable") %>%
-  arrange(desc(MeanDecreaseGini)) %>%
-  slice_head(n = N_top) 
-
-ggplot(varImp, aes(x = reorder(Variable, MeanDecreaseGini),
-                   y = MeanDecreaseGini)) +
-  geom_bar(stat = "identity", fill = "lightblue") +
-  coord_flip() + theme_minimal() +
-  labs(title = paste("Random-Forest: Top", N_top, "variables"),
-       x = NULL, y = "Mean Decrease Gini")
-
-# Compare with primary logistic model
-log_metrics <- evaluate_model(
-  "glm",
-  Diagnosis ~ LRI + Age + Gender + FamilyHistoryAlzheimers +
-    HeadInjury + MMSE + FunctionalAssessment,
-  data_hyp)
-
-perf_tbl <- rbind(Logistic = log_metrics,
-                  DecisionTree = dt_metrics,
-                  RandomForest = rf_metrics)
-print(round(perf_tbl, 3))
 
 
 
 
 
+# articles:
+
+# https://ieeexplore.ieee.org/abstract/document/9521165
+# https://ieeexplore.ieee.org/abstract/document/10359516
+# https://ieeexplore.ieee.org/abstract/document/10353401
+
+# https://ieeexplore.ieee.org/abstract/document/9201455
+# https://www.sciencedirect.com/science/article/pii/S1319157820304936
+# https://www.sciencedirect.com/science/article/pii/S0169809522002241
+
+# https://link.springer.com/article/10.1186/s12911-023-02238-9
 
 
 
 
+# https://ieeexplore.ieee.org/abstract/document/9201455 **************
+# https://www.sciencedirect.com/science/article/pii/S1319157820304936 ************
 
 
 
 
-
-
-# Encode target variable (ensure this is binary 0/1, looks good already)
-data$Diagnosis_numeric <- ifelse(data$Diagnosis == 1, 1, 0)
-
-# Split data
-set.seed(123)
-split_idx <- createDataPartition(data$Diagnosis_numeric, p = 0.8, list = FALSE)
-train_data <- data[split_idx, ]
-test_data  <- data[-split_idx, ]
-
-# Remove the target and ID-like columns from training predictors
-train_x <- train_data %>% dplyr::select(-Diagnosis, -Diagnosis_numeric)
-test_x  <- test_data %>% dplyr::select(-Diagnosis, -Diagnosis_numeric)
-
-# One-hot encode if needed (you said categorical variables are int-coded, so no factors)
-# Here you might not need one-hot encoding unless your variables are factors
-# If all are numeric/int, you can skip this and just use them directly
-
-# Combine back for GBM
-train_full <- cbind(train_x, Diagnosis_numeric = train_data$Diagnosis_numeric)
-
-# Check for constant columns or near-zero variance
-nzv <- nearZeroVar(train_full, saveMetrics = TRUE)
-print(nzv[nzv$nzv == TRUE, ])
-
-# Remove them if necessary
-train_full <- train_full[, !nzv$nzv]
-
-# Train GBM with correct formula
 gbm_model <- gbm(
-  Diagnosis_numeric ~ .,
-  data = train_full,
-  distribution = "bernoulli",
-  n.trees = 100,
-  shrinkage = 0.1,
-  interaction.depth = 3,
-  n.minobsinnode = 10,
-  verbose = FALSE
+  Diagnosis ~ ., # Formula: Predict 'Diagnosis' using all other columns in the specified data
+  data = train_data[, c("Diagnosis", predictors)], # Data frame and the columns to be used for training (Diagnosis and the selected predictors)
+  distribution = "bernoulli", # - logistic # Specifies the loss function to be used. "bernoulli" is appropriate for binary classification (0 or 1 outcomes like Diagnosis)
+  n.trees = 100, # The number of boosting iterations to perform. Each tree is built sequentially, trying to correct the errors of the previous trees. More trees can lead to better performance but also increased risk of overfitting and longer training time.
+  shrinkage = 0.1, # Also known as the learning rate. It scales the contribution of each tree. A smaller shrinkage value (e.g., 0.01, 0.1) makes the learning slower but often results in more robust models that generalize better.
+  interaction.depth = 6, # The maximum depth of each tree. It controls the complexity of the interactions between predictors that the model can capture. A depth of 1 means the model is additive (no interactions), a depth of 2 allows for two-way interactions, and so on. Higher values can capture more complex relationships but also increase the risk of overfitting.
+  n.minobsinnode = 10, # The minimum number of observations in the terminal nodes (leaves) of each tree. This parameter helps to regularize the model and prevent overfitting by ensuring that leaves are not too specific to small subsets of the training data.
+  verbose = FALSE # A logical value indicating whether to print progress and performance updates during the training process. FALSE means no output during training.
 )
 
 # Check summary (variable importance)
 summary(gbm_model)
 
-
-# Remove NZV columns from test set using the same columns removed from train
-test_x <- test_x[, colnames(test_x) %in% colnames(train_full)]
-
 # Predict probabilities
-pred_probs <- predict(gbm_model, newdata = test_x, n.trees = 100, type = "response")
+pred_probs <- predict(gbm_model, newdata = test_data, n.trees = 100, type = "response")
 
 # Convert probabilities to class labels (0 or 1) using 0.5 threshold
 pred_labels <- ifelse(pred_probs > 0.5, 1, 0)
 
 # Actual labels
-true_labels <- test_data$Diagnosis_numeric
+true_labels <- test_data$Diagnosis
 
 # Confusion matrix
 conf_mat <- confusionMatrix(as.factor(pred_labels), as.factor(true_labels), positive = "1")
 print(conf_mat)
 
-# AUC
-roc_obj <- roc(true_labels, pred_probs)
-auc_value <- auc(roc_obj)
-cat("AUC:", auc_value, "\n")
+cm_df <- as.data.frame(conf_mat$table)
 
-# Accuracy reached 95%
+# Rename columns for clarity
+cm_df <- cm_df %>%
+  rename(Predicted = Prediction, Actual = Reference, Count = Freq)
+
+# Create the plot
+ggplot(cm_df, aes(x = Actual, y = Predicted, fill = Count)) +
+  geom_tile() +
+  geom_text(aes(label = Count), color = "white", size = 5) +
+  scale_fill_gradient(low = "lightblue", high = "steelblue") +
+  labs(title = "Confusion Matrix", fill = "Count") +
+  theme_minimal() +
+  theme(aspect.ratio = 1)
+
+
+# AUC
+roc_obj_gboost <- roc(true_labels, pred_probs)
+auc_gboost <- auc(roc_obj_gboost)
+cat("AUC:", auc_gboost, "\n")
+
+# Accuracy reached 95,76%
+
+
+# --- Visualize ROC Curves ---
+roc_df_primary <- data.frame(
+  fpr = 1 - roc_obj_primary$specificities,
+  tpr = roc_obj_primary$sensitivities,
+  model = "Primary Model"
+)
+
+roc_df_gboost <- data.frame(
+  fpr = 1 - roc_obj_gboost$specificities,
+  tpr = roc_obj_gboost$sensitivities,
+  model = "GBoost Model"
+)
+
+roc_df_combined <- rbind(roc_df_primary, roc_df_gboost)
+
+
+
+ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
+  geom_line(linewidth = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey") +
+  
+  labs(
+    title = "Comparison of ROC Curves",
+    x = "False Positive Rate (1 - Specificity)",
+    y = "True Positive Rate (Sensitivity)",
+    color = "Model"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC (Primary) =", round(auc_primary, 3)), color = "blue") +
+  annotate("text", x = 0.75, y = 0.20, label = paste("AUC (GBoost) =", round(auc_gboost, 3)), color = "red")
+
+
+
+
+
 
