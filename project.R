@@ -383,7 +383,12 @@ cat("\nKey stats → EPV =", epv,
 # Comparison
 # Logistic GLM:
 #  -Provides odds ratios that test H1 directly. 
-#  -All assumptions met (binary outcome, EPV>10, VIF≈1, 0% missing).
+#  - Suitable choice given the binary outcome, 
+#  - lack of strong multicollinearity
+#  - Normality of predictors is not required.
+#  - No outliers
+#  - we have 2149 samples, it needs at least 500 samples
+#  - All assumptions met.
 
 # Decision-Tree: 
 #  -Handles mixed predictors, no distributional assumptions, produces transparent IF-THEN rules. 
@@ -394,75 +399,19 @@ cat("\nKey stats → EPV =", epv,
 
 # LDA: 
 #  -Dropped - requires all-numeric and multivariate normality, both were violated here. 
+#  - also requires normality
 # -Would add no value beyond GLM.
+
+# SVM
+# - While SVM could potentially work, Logistic Regression is often more 
+# interpretable for binary outcomes and directly models the probability. 
+# The lack of strong evidence for complex non-linear relationships in the 
+# predictors themselves didn't necessitate the complexity of SVM with kernels.
 
 # Planned modeling path
 # primary_model <- Logistic GLM: for inference / H1 test
 # secondary_model <- Decision Tree: benchmark with explanations
 # exploratory_model <- Random Forest: optional accuracy check
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Model Selection Rationale Based on Requirements and EDA:
-
-# We have a binary response variable (Diagnosis) and a dataset with 2149 samples.
-# Our EDA showed that no predictors are normally distributed, there's almost no correlation between predictors,
-# and t-tests and chi-squared tests indicated significant associations between individual predictors and the response.
-# There were no outliers and no missing data.
-
-# --- Model Evaluation and Rejection Rationale ---
-
-# 1. Logistic Regression (Chosen Model):
-#    - Requirement: Binary outcome - MET (Diagnosis is binary).
-#    - Requirement: Predictor Variable(s) Independence - ASSUMED (EDA showed low correlation).
-#    - Requirement: No severe multicollinearity - MET (VIF ≤ 5, max 1.03 in previous table).
-#    - Requirement: Normality - NOT REQUIRED.
-#    - Requirement: Feature Scaling - NOT REQUIRED.
-#    - Requirement: Homoscedasticity - NOT STRICTLY REQUIRED (though checked in residuals).
-#    - Requirement: No extreme outliers - MET (EDA showed no outliers).
-#    - Requirement: Large sample size - MET (2149 samples).
-#    - Requirement: Linear relationship between predictors and the log-odds - ASSUMED and the model's functional form.
-#    - Conclusion: Logistic Regression is a suitable choice given the binary outcome, lack of strong multicollinearity,
-#                  and the fact that normality of predictors is not required.
-
-# 2. Support Vector Machine (SVM):
-#    - Requirement: Binary of multiclass - MET (can handle binary).
-#    - Requirement: Predictor Variable(s) Independence - ASSUMED.
-#    - Requirement: No severe multicollinearity - MET.
-#    - Requirement: Normality - NOT REQUIRED.
-#    - Requirement: Feature Scaling - RECOMMENDED (our data was likely not scaled, as it wasn't explicitly mentioned as done). While it *could* be performed, Logistic Regression doesn't strictly need it and was a good fit otherwise.
-#    - Requirement: No extreme outliers - MET.
-#    - Requirement: Performs well with smaller sample sizes, but larger sample size can boost performance - MET (large sample size).
-#    - Requirement: Can handle non-linear relationships using kernel functions - POTENTIAL BENEFIT (EDA didn't strongly suggest non-linearity in predictors themselves, but in their relationship with the log-odds, Logistic Regression handles this through its link function).
-#    - Rejection Rationale: While SVM could potentially work, Logistic Regression is often more interpretable for binary outcomes and directly models the probability. The lack of strong evidence for complex non-linear relationships in the predictors themselves didn't necessitate the complexity of SVM with kernels.
-
-# 3. Linear Discriminant Analysis (LDA) / Quadratic Discriminant Analysis (QDA):
-#    - Requirement: Categorical Response Variable - MET (binary is a type of categorical).
-#    - Requirement: Predictor Variable(s) Independence - ASSUMED.
-#    - Requirement: No severe multicollinearity - MET.
-#    - Requirement: Predictor variables should be normally distributed - NOT MET (EDA showed no predictors are normally distributed). While LDA can be somewhat robust to mild violations, a complete lack of normality across all predictors is a significant issue.
-#    - Requirement: Predictor variables should have the same variance (Homoscedasticity for LDA) - NOT CHECKED EXPLICITLY FOR PREDICTORS, but the lack of normality raises concerns. QDA relaxes this assumption but still prefers normality.
-#    - Requirement: No extreme outliers - MET.
-#    - Requirement: Performs better with larger sample sizes - MET.
-#    - Requirement: Linear combinations of features should separate classes (LDA) - This might not hold if the underlying relationships are complex and non-linear in the predictor space.
-#    - Rejection Rationale: The key reason for rejecting LDA/QDA is the violation of the normality assumption for the predictor variables. These methods rely heavily on the assumption that predictors within each class follow a multivariate normal distribution.
-
-
-
-
 
 
 
@@ -497,54 +446,6 @@ cv_splits <- vfold_cv(
 print(cv_splits)
 # rsample object with 10 splits and class-stratification information
 
-
-
-
-
-
-
-
-# Set up a consistent cross-validation strategy (e.g., 5-fold CV)
-cv_consistent <- trainControl(method = "cv", number = 5)
-
-# Choose a model (logistic regression)
-model_type <- "glm"
-
-# Train the model with the consistent CV strategy
-set.seed(123)
-model_5_fold <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy")
-cv_consistent <- trainControl(method = "cv", number = 10)
-
-set.seed(123)
-model_10_fold_SIMPLIFIED <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy") # Using same CV
-
-set.seed(123)
-model_stratified_5_fold_SIMPLIFIED <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy") # Using same CV
-
-# LOOCV has a different number of resamples (equal to the number of data points),
-# so it's best to exclude it from direct comparison with k-fold CV in resamples()
-# model_loocv <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy")
-
-set.seed(123)
-model_repeated_cv_SIMPLIFIED <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy") # Using same CV
-
-set.seed(123)
-model_shuffle_split_SIMPLIFIED <- train(Diagnosis ~ ., data = data[, c("Diagnosis", predictors)], method = model_type, trControl = cv_consistent, metric = "Accuracy") # Using same CV
-
-# Compare the results of models trained with the SAME number of resamples
-results_comparison <- resamples(list(
-  `5-Fold CV` = model_5_fold,
-  `10-Fold CV (Simplified)` = model_10_fold_SIMPLIFIED,
-  `Stratified 5-Fold CV (Simplified)` = model_stratified_5_fold_SIMPLIFIED,
-  # `LOOCV` = model_loocv, # Excluding LOOCV for now due to different resample number
-  `Repeated CV (Simplified)` = model_repeated_cv_SIMPLIFIED,
-  `Shuffle-Split (Simplified)` = model_shuffle_split_SIMPLIFIED
-))
-
-summary(results_comparison)
-
-# Visualize the performance distributions
-dotplot(results_comparison, metric = "Accuracy")
 
 
 
@@ -618,6 +519,38 @@ train_index <- createDataPartition(data_numeric$Diagnosis, p = 0.7, list = FALSE
 train_data <- data_numeric[train_index, ]
 test_data  <- data_numeric[-train_index, ]
 
+set.seed(235455)
+# Define the training control for 10-fold cross-validation
+train_control <- trainControl(method = "cv", # Use cross-validation
+                              number = 10)  # Specify the number of folds (k=10)
+
+# Then, run the train() function again:
+model_cv <- train(
+  as.factor(Diagnosis) ~ .,
+  data = train_data[, c("Diagnosis", predictors)],
+  method = "glm",
+  family = "binomial",
+  trControl = train_control
+)
+
+# Print the cross-validation results
+print(model_cv)
+
+# from crossvalidation we can see Accuracy of 0.8492097 and Kappa of 0.6571427
+# Kappa is a metric that measures how much better your classifier is compared to random guessing
+
+library(pmsampsize)
+pmsampsize(
+  type = "b",              # binary outcome
+  cstatistic = 0.85,       # use AUC estimate if known, or guess ~0.85
+  parameters = 9,          # number of predictor parameters
+  prevalence = 0.35,        # proportion of positive outcome (e.g. Diagnosis = 1)
+  shrinkage = 0.9          # to limit overfitting (default)
+)
+# the test shows us that:
+# Minimum sample size required for new model development based on user inputs = 350
+
+
 model_primary <- glm(
   Diagnosis ~ .,
   data = train_data[, c("Diagnosis", predictors)],
@@ -645,10 +578,14 @@ AIC(model_primary, model_secondary)
 vif(model_primary)
 # VIF values are < 5 therefore no multicolinearity is detected.
 
-# TODO: keep this ? know how to explain it ?
 # Convert log-odds to odds-ratios
-exp(cbind(OR = coef(model_primary),   # exponentiate → odds ratios
-          confint(model_primary)))    # 95 % CIs for interpretation
+exp(cbind(OddsRatios = coef(model_primary),   # exponentiate → odds ratios
+          confint(model_primary)))    # CIs for interpretation
+
+# For a one-unit increase in FunctionalAssessment, the odds of the positive 
+# outcome are multiplied by approximately 0.64. This indicates that higher 
+# values of FunctionalAssessment are associated with lower odds of the 
+# positive outcome (since 0.64 < 1).
 
 library(leaps)
 combination_models <- regsubsets(Diagnosis ~ .,
@@ -745,8 +682,6 @@ test_results_table$Interpretation[5] <- ifelse(is.na(dw_test_result$p.value), "N
 
 print(test_results_table)
 
-# --- Interpretation by Outcome ---
-
 outcome_interpretation <- data.frame(
   Test = test_results_table$Test,
   Outcome = character(5)
@@ -769,8 +704,6 @@ outcome_interpretation$Outcome[5] <- ifelse(is.na(dw_test_result$p.value),
                                             ifelse(dw_test_result$p.value > 0.05,
                                                    "Residuals appear to be independent (no significant autocorrelation).",
                                                    "Residuals show significant autocorrelation (potential unmodeled temporal dependencies)."))
-
-cat("\n--- Interpretation of Residual Tests by Outcome ---\n")
 print(outcome_interpretation)
 
 
@@ -1076,14 +1009,14 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
 
 # Gradient Boosting Machine (GBM) Model Results:
 
-# 1. Variable Importance:
+# Variable Importance:
 #    The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
 #    - FunctionalAssessment is the most important variable, with a relative influence of approximately 23.9%.
 #    - MMSE and ADL are also highly influential, with relative influences of around 21.7% and 20.7%, respectively.
 #    - MemoryComplaints and BehavioralProblems have moderate influence (around 15.7% and 13.3%).
 #    - SleepQuality and CholesterolHDL appear to have the least influence on the model's predictions (2.7% and 1.9%).
 
-# 2. Confusion Matrix and Statistics:
+# Confusion Matrix and Statistics:
 #    The confusion matrix on the test set (assuming this matrix was generated from the GBM model's predictions) shows the following:
 #    - True Negatives (TN): 386 (Number of actual 0s correctly predicted as 0)
 #    - False Negatives (FN): 25 (Number of actual 1s incorrectly predicted as 0)
@@ -1107,11 +1040,5 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
 #    - Balanced Accuracy: 0.9327 (Average of sensitivity and specificity)
 #    - 'Positive' Class: 1 (Indicates that class '1' was treated as the positive class for sensitivity and specificity calculations)
 
-# 3. Area Under the ROC Curve (AUC):
+# Area Under the ROC Curve (AUC):
 #    - AUC: 0.9534141 (This indicates excellent discriminatory power of the GBM model. An AUC of 0.95 suggests a high ability to distinguish between the positive and negative classes.)
-
-# Findings:
-# - The GBM model demonstrates strong predictive performance for the 'Diagnosis' variable, achieving a high accuracy and AUC.
-# - FunctionalAssessment, MMSE, and ADL are the most important predictors in the model.
-# - The model shows a good balance between sensitivity and specificity, indicating it performs well in identifying both positive and negative cases.
-# - The high AUC further supports the model's ability to effectively separate the two diagnostic classes.
