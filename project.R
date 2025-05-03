@@ -449,6 +449,14 @@ print(cv_splits)
 
 
 
+# More Reliable -  Gives a better estimate of how well your model will work on new, unseen data compared to a single train-test split.
+# Efficient Data Use - Uses 2149 samples more effectively for both training and evaluation.
+# Checks Stability - Shows if your model's performance is consistent across different parts of your data.
+# Less Biased - Reduces the risk of your evaluation being misleading due to a lucky or unlucky data split.
+# Standard Practice - It's the common and recommended way to evaluate classification models like logistic regression.
+
+
+
 
 ################################################################################
 ################# Data preparation & Lifestyle-Risk-Index (LRI) ################
@@ -519,7 +527,7 @@ train_index <- createDataPartition(data_numeric$Diagnosis, p = 0.7, list = FALSE
 train_data <- data_numeric[train_index, ]
 test_data  <- data_numeric[-train_index, ]
 
-set.seed(235455)
+set.seed(51635455)
 # Define the training control for 10-fold cross-validation
 train_control <- trainControl(method = "cv", # Use cross-validation
                               number = 10)  # Specify the number of folds (k=10)
