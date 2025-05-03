@@ -828,56 +828,11 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
 
 
 
-################################################################################
-############################ Hypothesis-test results ###########################
-################################################################################
-# Coefficient table shows:
-# -LRI  ->  Est. =  –0.015   (p = 0.74) ... meaning NOT significant
-# -Age  ->  Non-sig.
-# -MMSE & FunctionalAssessment ... highly significant (***)
-# --After we account for MMSE and FunctionalAssessment, the six-item lifestyle score does NOT add explanatory power -> Cognitive status dominates
-# -Null deviance: 2792.3 on 2148: This high number tells us that it fits poorly. 
-# Residual deviance: 2358.5 on 2141: Shows improvement with collective effort of predictors.
 
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-################################################################################
-########################### Alternative models (DT & RF) #######################
-################################################################################
-# X-fold cross-validation function that works for these 3 models:
-# -glm – logistic regression
-# -rpart – single decision tree
-# -rf – random forest
-# --It returns mean Accuracy, Sensitivity, Specificity, and AUC
-
-# Args:
-# -model_type (glm, rpart, rf)
-# -formula_or_data (for GLM we need a formula, for tree models we ignore it)
-# -data (must contain predictors and diagnosis)
 
 
 
