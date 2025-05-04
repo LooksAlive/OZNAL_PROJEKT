@@ -17,7 +17,7 @@ library(randtests)
 library(lmtest)
 #'library(shiny)
 
-
+setwd("/home/adam/Plocha/skola/8. Semester/OZNAL/Elements of AI/Case Study/OZNAL_PROJEKT")
 data <- read.csv("alzheimers_disease_data.csv")
 
 
@@ -41,13 +41,6 @@ any( duplicated(data) )
 table(data$Diagnosis)             # AD diagnosis; 0 - No, 1 - Yes
 prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
 #' Dataset has more negatives diagnosis than positive (65%)
-
-#' Power check - events-per-variable (EPV) for logistic
-events_pos <- sum(data$Diagnosis == 1) #' 760AD
-p <- 7 #' of covariates (measurable variable that has a statistical relationship with the dependent variable) in H1 model
-EPV <- events_pos / p
-cat("Events-per-variable (EPV) =", round(EPV, 1), "\n")
-#' EPV is 108 which is > 10 which is generally considered adequate for stable logistic estimates
 
 #' Convert low-cardinality (few unique values) numerics to factors
 for (col_name in names(data)) {
@@ -204,7 +197,11 @@ print(test_results)
 predictors <- c(
   "FunctionalAssessment", "ADL", 
   "MemoryComplaints", "BehavioralProblems",
-  "MMSE", "CholesterolHDL", "SleepQuality"
+  "MMSE", "CholesterolHDL", "SleepQuality", 
+  
+  "Ethnicity", "Hypertension", "CholesterolLDL",
+  
+  "FamilyHistoryAlzheimers", "Disorientation", "Forgetfulness"
 )
 
 
@@ -314,6 +311,12 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 # -Exploratory_model <- GBM
 
 
+
+
+
+
+
+
 # We picked Stratified 10-fold cross-validation:
 # -The data is divided into 10 equal “folds” of ~215 observations each.
 # -In each of 10 iterations:
@@ -344,55 +347,67 @@ print(cv_splits)
 
 
 
-#'# Data preparation & Lifestyle-Risk-Index (LRI)
-#' Goal is to keep only variables needed for the hypothesis + create a trimmed data frame for modelling
 
-#' Keep only variables required by the hypothesis
-core_vars <- c(predictors, 
-               # non-modifiable risk factors
-               "FamilyHistoryAlzheimers", "HeadInjury",
-               # lifestyle components
-               "PhysicalActivity", "DietQuality",
-               "Smoking", "AlcoholConsumption", "BMI"
-)
 
-data_hyp <- data_numeric %>% dplyr::select(all_of(core_vars))
-
-#' Change each lifestyle component into a binary risk flag
-#' (1 = risky level, 0 = healthy/reference level)
-data_hyp <- data_hyp %>% mutate(
-  pa_risk      = ifelse(PhysicalActivity   <  3, 1, 0),  # < 3 h moderate PA / wk
-  diet_risk    = ifelse(DietQuality        <= 4, 1, 0),  # low diet-quality score
-  sleep_risk   = ifelse(SleepQuality       <= 5, 1, 0),  # poor sleep quality
-  smoke_risk   = ifelse(Smoking            == 1, 1, 0),  # current smoker
-  alcohol_risk = ifelse(AlcoholConsumption  > 14,1, 0),  # > 14 units / wk
-  bmi_risk     = ifelse(BMI                >= 30,1, 0)   # obese
+library(pmsampsize)
+pmsampsize(
+  type = "b",              # binary outcome
+  cstatistic = 0.85,       # use AUC estimate if known, or guess ~0.85
+  parameters = 9,          # number of predictor parameters
+  prevalence = 0.35,       # proportion of positive outcome (e.g. Diagnosis = 1)
+  shrinkage = 0.9          # to limit overfitting (default)
 )
-#' Sum the six flags to obtain the Lifestyle-Risk-Index (LRI)
-data_hyp <- data_hyp %>% mutate(
-  LRI = pa_risk + diet_risk + sleep_risk + smoke_risk + alcohol_risk + bmi_risk
-)
-
-data_numeric <- data_numeric %>% mutate(
-  LRI = data_hyp$LRI
-)
-data <- data %>% mutate(
-  LRI = data_hyp$LRI
-)
+#' the test shows us that:
+#' Minimum sample size required for new model development based on user inputs = 350
 
 
 
 
 
 #'# Hypothesis test
-#' H1: Higher LRI = higher odds of Alzheimer.
-
 
 #' Split dataset into training and testing sets
 set.seed(235455)
 train_index <- createDataPartition(data_numeric$Diagnosis, p = 0.7, list = FALSE)
 train_data <- data_numeric[train_index, ]
 test_data  <- data_numeric[-train_index, ]
+
+model_primary <- glm(
+  Diagnosis ~ .,
+  data = train_data[, c("Diagnosis", predictors)],
+  family = binomial
+)
+
+summary(model_primary)
+
+
+library(leaps)
+combination_models <- regsubsets(Diagnosis ~ .,
+                                 data = train_data[, c("Diagnosis", predictors)])
+summary(combination_models)
+#' This resulting tables shows best combination of predictors for N number of
+#' predictors e.g. if we want just 1 - we pick FunctionalAssessment, for 2 predictors
+#' we pick FunctionalAssessment and MemoryComplaints, and for 3 we pick
+#' FunctionalAssessment, MemoryComplaints and ADL, ...
+
+#' so we pick best combination of predictors
+predictors <- c(
+  "FunctionalAssessment", "ADL", 
+  "MemoryComplaints", "BehavioralProblems",
+  "MMSE", "SleepQuality", 
+  "CholesterolLDL", "FamilyHistoryAlzheimers"
+)
+
+model_primary <- glm(
+  Diagnosis ~ .,
+  data = train_data[, c("Diagnosis", predictors)],
+  family = binomial
+)
+
+summary(model_primary)
+
+
+
 
 set.seed(51635455)
 #' Define the training control for 10-fold cross-validation
@@ -410,43 +425,8 @@ model_cv <- train(
 
 #' Print the cross-validation results
 print(model_cv)
-
-#' from crossvalidation we can see Accuracy of 0.8492097 and Kappa of 0.6571427
+#' from cross-validation we can see Accuracy of 0.8544415 and Kappa of 0.6684592
 #' Kappa is a metric that measures how much better your classifier is compared to random guessing
-
-library(pmsampsize)
-pmsampsize(
-  type = "b",              # binary outcome
-  cstatistic = 0.85,       # use AUC estimate if known, or guess ~0.85
-  parameters = 9,          # number of predictor parameters
-  prevalence = 0.35,       # proportion of positive outcome (e.g. Diagnosis = 1)
-  shrinkage = 0.9          # to limit overfitting (default)
-)
-#' the test shows us that:
-#' Minimum sample size required for new model development based on user inputs = 350
-
-model_primary <- glm(
-  Diagnosis ~ .,
-  data = train_data[, c("Diagnosis", predictors)],
-  family = binomial
-)
-
-summary(model_primary)
-
-second_predictors <- c(predictors, "LRI")
-model_secondary <- glm(
-  Diagnosis ~ .,
-  data = train_data[, c("Diagnosis", second_predictors[!second_predictors %in% c("CholesterolHDL", "SleepQuality")])],
-  family = binomial
-)
-#' SleepQuality is also in LRI predictor
-
-summary(model_secondary)
-
-
-#' Compare models
-AIC(model_primary, model_secondary)
-#' AIC index shows that priamry/first model is slightly better, so we continue with primary model.
 
 #' Multicolinearity
 vif(model_primary)
@@ -460,18 +440,6 @@ exp(cbind(OddsRatios = coef(model_primary),   # exponentiate → odds ratios
 #' outcome are multiplied by approximately 0.64. This indicates that higher 
 #' values of FunctionalAssessment are associated with lower odds of the 
 #' positive outcome (since 0.64 < 1).
-
-library(leaps)
-combination_models <- regsubsets(Diagnosis ~ .,
-                                 data = train_data[, c("Diagnosis", second_predictors)])
-summary(combination_models)
-#' This resulting tables shows best combination of predictors for N number of
-#' predictors e.g. if we want just 1 - we pick FunctionalAssessment, for 2 predictors
-#' we pick FunctionalAssessment and MemoryComplaints, and for 3 we pick
-#' FunctionalAssessment, MemoryComplaints and ADL, ...
-
-
-
 
 
 
@@ -580,10 +548,6 @@ print(outcome_interpretation)
 
 
 
-
-
-
-
 #' Predict probabilities on test set
 test_probs <- predict(model_primary, newdata = test_data, type = "response")
 
@@ -605,7 +569,7 @@ print(conf_matrix_default)
 
 optimal_threshold_primary
 #' Confusion matrix - optimal threshold
-preds_optimal <- factor(ifelse(test_probs > 0.3338061, 1, 0), levels = c(0, 1))
+preds_optimal <- factor(ifelse(test_probs > 0.3463317, 1, 0), levels = c(0, 1))
 conf_matrix_optimal <- confusionMatrix(preds_optimal, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Optimal Threshold):\n")
 print(conf_matrix_optimal)
@@ -633,70 +597,6 @@ ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
 
 
 
-#' Predict probabilities on test set for secondary model
-test_probs_secondary <- predict(model_secondary, newdata = test_data, type = "response")
-
-#' ROC analysis for secondary model
-roc_obj_secondary <- roc(test_data$Diagnosis, test_probs_secondary)
-auc_secondary <- auc(roc_obj_secondary)
-cat("AUC (Secondary Model):", round(auc_primary, 3), "\n")
-cat("AUC (Secondary Model):", round(auc_secondary, 3), "\n")
-
-#' Here secondary model has slightly bigger auc.
-
-#' Optimal threshold for secondary model
-coords_obj_secondary <- coords(roc_obj_secondary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
-optimal_threshold_secondary <- coords_obj_secondary["threshold"]
-optimal_threshold_secondary
-
-#' Visualize ROC Curves
-roc_df_primary <- data.frame(
-  fpr = 1 - roc_obj_primary$specificities,
-  tpr = roc_obj_primary$sensitivities,
-  model = "Primary Model"
-)
-
-roc_df_secondary <- data.frame(
-  fpr = 1 - roc_obj_secondary$specificities,
-  tpr = roc_obj_secondary$sensitivities,
-  model = "Secondary Model"
-)
-
-roc_df_combined <- rbind(roc_df_primary, roc_df_secondary)
-
-
-
-ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
-  geom_line(linewidth = 1) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey") +
-  
-  #' Add vertical and horizontal lines for primary threshold
-  geom_vline(xintercept = 1 - coords_obj_primary$specificity, color = "blue", linetype = "dotted") +
-  geom_hline(yintercept = coords_obj_primary$sensitivity, color = "blue", linetype = "dotted") +
-  
-  #' Add vertical and horizontal lines for secondary threshold
-  geom_vline(xintercept = 1 - coords_obj_secondary$specificity, color = "red", linetype = "dotted") +
-  geom_hline(yintercept = coords_obj_secondary$sensitivity, color = "red", linetype = "dotted") +
-  
-  labs(
-    title = "Comparison of ROC Curves",
-    x = "False Positive Rate (1 - Specificity)",
-    y = "True Positive Rate (Sensitivity)",
-    color = "Model"
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom") +
-  annotate("text", x = 0.75, y = 0.25, label = paste("AUC (Primary) =", round(auc_primary, 3)), color = "blue") +
-  annotate("text", x = 0.75, y = 0.20, label = paste("AUC (Secondary) =", round(auc_secondary, 3)), color = "red")
-
-
-
-
-
-
-
-
-
 majority_class <- names(which.max(table(data_numeric$Diagnosis)))
 majority_class_count <- max(table(data_numeric$Diagnosis))
 total_samples <- nrow(data_numeric)
@@ -707,58 +607,6 @@ cat("No Information Rate:", no_information_rate, "\n")
 
 #' Logistic regression model's accuracy is higher than the No Information Rate.
 #' Therefore our model is learning useful information from the predictors.
-
-
-
-
-
-
-
-
-
-
-
-
-
-logit_p_opt <- log(optimal_threshold_primary / (1 - optimal_threshold_primary))
-coefs <- coef(model_primary)
-intercept <- coefs["(Intercept)"]
-
-results <- data.frame(Predictor = predictors, Calculated_Value = NA)
-
-for (i in seq_along(predictors)) {
-  pred <- predictors[i]
-  if (pred %in% names(coefs)) {
-    coeff <- coefs[pred]
-    if (is.numeric(data_numeric[[pred]])) {
-      results[i, "Calculated_Value"] <- round((logit_p_opt - intercept) / coeff, 3)
-    } else if (is.factor(data_numeric[[pred]])) {
-      levels_info <- ""
-      baseline <- levels(data_numeric[[pred]])[1]
-      prob_base <- round(plogis(intercept), 3)
-      levels_info <- paste0(baseline, "(Base):", prob_base, "; ")
-      for (level in levels(data_numeric[[pred]])[-1]) {
-        coeff_name <- paste0(pred, level)
-        if (coeff_name %in% names(coefs)) {
-          prob <- round(plogis(intercept + coefs[coeff_name]), 3)
-          levels_info <- paste0(levels_info, level, ":", prob, "; ")
-        }
-      }
-      results[i, "Calculated_Value"] <- levels_info
-    }
-  } else {
-    results[i, "Calculated_Value"] <- "N/A"
-  }
-}
-
-print(results)
-
-cat("\nExplanation:\n")
-cat("Continuous Predictors: Approximate predictor value at the optimal probability (others at zero).\n")
-cat("Categorical Predictors: Predicted probability for each level (vs. baseline, others at zero).\n")
-
-
-
 
 
 
@@ -787,16 +635,6 @@ cat("Categorical Predictors: Predicted probability for each level (vs. baseline,
 
 
 #'# Cross-validation for GBM model
-
-#' GBM model parameters
-gbm_params <- list(
-  distribution = "bernoulli",
-  n.trees = 100,
-  shrinkage = 0.1,
-  interaction.depth = 6,
-  n.minobsinnode = 10,
-  verbose = FALSE
-)
 
 data_for_gbm <- train_data[, c("Diagnosis", predictors)]
 
@@ -829,8 +667,8 @@ gbm_model_cv <- train(
 )
 
 print(gbm_model_cv)
-#' average Accuracy for GBM cross-validation appears to be Average 94.7%,
-#' so it performs very well. also Kappa is 0.88 which is also very good result.
+#' average Accuracy for GBM cross-validation appears to be Average 95.2%,
+#' so it performs very well. also Kappa is 0.89 which is also very good result.
 
 
 
@@ -855,7 +693,7 @@ summary(gbm_model)
 #' Predict probabilities
 pred_probs <- predict(gbm_model, newdata = test_data, n.trees = 100, type = "response")
 
-#' Convert probabilities to class labels (0 or 1) using 0.5 threshold
+#' classify using 0.5 threshold
 pred_labels <- ifelse(pred_probs > 0.5, 1, 0)
 
 #' Actual labels
@@ -886,7 +724,7 @@ roc_obj_gboost <- roc(true_labels, pred_probs)
 auc_gboost <- auc(roc_obj_gboost)
 cat("AUC:", auc_gboost, "\n")
 
-#' Accuracy reached 95%
+#' Accuracy reached 95.5%
 
 
 coords_obj_gboost <- coords(roc_obj_gboost, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
@@ -894,7 +732,7 @@ optimal_threshold_gboost <- coords_obj_gboost["threshold"]
 optimal_threshold_gboost
 
 
-preds_optimal <- factor(ifelse(pred_probs > 0.3567714, 1, 0), levels = c(0, 1))
+preds_optimal <- factor(ifelse(pred_probs > 0.3406662, 1, 0), levels = c(0, 1))
 conf_matrix_optimal <- confusionMatrix(preds_optimal, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Optimal Threshold):\n")
 print(conf_matrix_optimal)
