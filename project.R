@@ -1,3 +1,11 @@
+#' ---
+#' title: "RMD_Oznal_Melikant_Kello"
+#' author: "Adam Melikant, Richard Kello"
+#' date: "`r Sys.Date()`"
+#' output: html_document
+#' ---
+
+
 #'# Setup & data import
 library(tidyverse)
 library(tidymodels)
@@ -285,9 +293,6 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 #'# Hypothesis formulation
 #' H0: The classification performance (e.g. AUC) of the base model built on MMSE, FunctionalAssessment, ADL, MemoryComplaints and BehavioralProblems is yealds little no none performance increase when we add the composite LRI. There is no gain from including the lifestyle index.
 
-#' H1: Adding the composite LRI to that core five-variable model produces a significant increase in classification performance (e.g. AUC).
-
-
 
 # Based on EDA we selected 5 core predictors (MMSE, ADL, MemoryComplaints, BehavioralProblems, FunctionalAssessment) and concluded our models must check these requirements:
 # -Handle a binary outcome (Diagnosis ∈ {0,1})
@@ -426,7 +431,7 @@ residuals_primary <- residuals(model_primary, type = "deviance")
 # qqnorm(residuals_primary, main = "QQ-Plot of Deviance Residuals (Primary Model)")
 # qqline(residuals_primary, col = "red")
 
-car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Linear Regression")
+car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Logistic Regression")
 
 #' Interpretation of QQ-Plot:
 #' This plot helps assess if the distribution of your residuals follows a theoretical normal distribution.
@@ -434,13 +439,6 @@ car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Linear Regress
 #'  Deviations from the line, especially S-shapes or curves, suggest non-normality.
 #'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
 
-fitted_values_primary <- fitted(model_primary) # Get fitted values
-
-# Create the plot
-plot(fitted_values_primary, residuals_primary,
-     xlab = "Fitted Values", ylab = "Deviance Residuals",
-     main = "Residuals vs. Fitted Values Plot")
-abline(h = 0, col = "red", lty = 2)  # Add a horizontal line at y=0
 
 #'# Statistical Tests on Residuals
 
@@ -516,6 +514,8 @@ roc_obj_primary <- roc(test_data$Diagnosis, test_probs)
 auc_primary <- auc(roc_obj_primary)
 cat("AUC:", round(auc_primary, 3), "\n")
 
+#' Area under the curve for glm model is 0.908
+
 #' Get optimal threshold
 coords_obj_primary <- coords(roc_obj_primary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
 optimal_threshold_primary <- coords_obj_primary["threshold"]
@@ -540,15 +540,15 @@ create_cm_df <- function(cm, model_name) {
     mutate(Model = model_name)
 }
 
-cm_df_primary_default <- create_cm_df(conf_matrix_default, "Primary (Th=0.5)")
-cm_df_primary_optimal <- create_cm_df(conf_matrix_optimal, "Primary (Th=0.4381873)")
+cm_df_primary_default <- create_cm_df(conf_matrix_default, "GLM (Th=0.5)")
+cm_df_primary_optimal <- create_cm_df(conf_matrix_optimal, "GLM (Th=0.3463317)")
 
 cm_df_primary <- rbind(cm_df_primary_default, cm_df_primary_optimal)
 
 ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
   geom_tile() +
   geom_text(aes(label = Freq), color = "white", size = 5) +
-  scale_fill_gradient(low = "lightblue", high = "steelblue") +
+  scale_fill_gradient(low = "lightblue", high = "blue") +
   facet_wrap(~ Model) +
   labs(title = "Confusion Matrices - Primary Model", fill = "Count") +
   theme_minimal() +
@@ -573,34 +573,37 @@ cat("No Information Rate:", no_information_rate, "\n")
 
 #'# Second Model - XBoost (GBM)
 
+#' main article:
+#'@article{article,
+#'  author = {Dada, Emmanuel and Ibrahim Birma, Aishatu and Gora, Abdulkarim},
+#'  year = {2024},
+#'  month = {04},
+#'  pages = {46-73},
+#'  title = {Ensemble Machine Learning Algorithm for Diabetes Prediction in Maiduguri, Borno State},
+#'  volume = {2},
+#'  journal = {Mikailalsys Journal of Mathematics and Statistics},
+#'  doi = {10.58578/mjms.v2i2.2875}
+#'}
+
+#' this study applied various ensemble methods, including GBoost, to predict diabetes .
+#' in this article they used this parameters:
+#' n_estimators 400
+#' max_depth 5
+#' Loss Squared_error
+#' min_samples_split 2
+#' learning_rate 0.1
+#' 
+#' The Gradient Boosting Regressor (GBoost) was among the models assessed, with its performance metrics reported as follows:
+#' Root Mean Square Error (RMSE): 0.4833
+#' Mean Square Error (MSE): 0.2336
+#' Mean Absolute Error (MAE): 0.4003
 
 
-#' articles:
-
-#' https://ieeexplore.ieee.org/abstract/document/9521165
-#' https://ieeexplore.ieee.org/abstract/document/10359516
-#' https://ieeexplore.ieee.org/abstract/document/10353401
-
-#' https://ieeexplore.ieee.org/abstract/document/9201455
-#' https://www.sciencedirect.com/science/article/pii/S1319157820304936
-#' https://www.sciencedirect.com/science/article/pii/S0169809522002241
-
-#' https://link.springer.com/article/10.1186/s12911-023-02238-9
-
-
-#' https://ieeexplore.ieee.org/abstract/document/9201455 **************
-#' https://www.sciencedirect.com/science/article/pii/S1319157820304936 ************
 
 
 
 
 #'# Cross-validation for GBM model
-
-
-
-
-
-
 
 data_for_gbm <- train_data[, c("Diagnosis", predictors)]
 
@@ -624,25 +627,25 @@ gbm_model_cv <- train(
   trControl = train_control,
   metric = "Accuracy",
   tuneGrid = expand.grid(
-    n.trees = 100,
+    n.trees = 400,
     shrinkage = 0.1,
-    interaction.depth = 6,
+    interaction.depth = 5,
     n.minobsinnode = 10
   ),
   verbose = FALSE
 )
 
 print(gbm_model_cv)
-#' average Accuracy for GBM cross-validation appears to be Average 95.2%,
-#' so it performs very well. also Kappa is 0.89 which is also very good result.
+#' average Accuracy for GBM cross-validation appears to be Average 94%,
+#' so it performs very well. also Kappa is 0.867 which is also very good result.
 
 gbm_model <- gbm(
   Diagnosis ~ ., # Formula: Predict 'Diagnosis' using all other columns in the specified data
   data = train_data[, c("Diagnosis", predictors)], # Data frame and the columns to be used for training (Diagnosis and the selected predictors)
   distribution = "bernoulli", # logistic - Specifies the loss function to be used. "bernoulli" is appropriate for binary classification (0 or 1 outcomes like Diagnosis)
-  n.trees = 100, # The number of boosting iterations to perform. Each tree is built sequentially, trying to correct the errors of the previous trees. More trees can lead to better performance but also increased risk of overfitting and longer training time.
+  n.trees = 400, # The number of boosting iterations to perform. Each tree is built sequentially, trying to correct the errors of the previous trees. More trees can lead to better performance but also increased risk of overfitting and longer training time.
   shrinkage = 0.1, # Also known as the learning rate. It scales the contribution of each tree. A smaller shrinkage value (e.g., 0.01, 0.1) makes the learning slower but often results in more robust models that generalize better.
-  interaction.depth = 6, # The maximum depth of each tree. It controls the complexity of the interactions between predictors that the model can capture. A depth of 1 means the model is additive (no interactions), a depth of 2 allows for two-way interactions, and so on. Higher values can capture more complex relationships but also increase the risk of overfitting.
+  interaction.depth = 5, # The maximum depth of each tree. It controls the complexity of the interactions between predictors that the model can capture. A depth of 1 means the model is additive (no interactions), a depth of 2 allows for two-way interactions, and so on. Higher values can capture more complex relationships but also increase the risk of overfitting.
   n.minobsinnode = 10, # The minimum number of observations in the terminal nodes (leaves) of each tree. This parameter helps to regularize the model and prevent overfitting by ensuring that leaves are not too specific to small subsets of the training data.
   verbose = FALSE # A logical value indicating whether to print progress and performance updates during the training process. FALSE means no output during training.
 )
@@ -652,12 +655,12 @@ summary(gbm_model)
 
 #' Variable Importance:
 #'The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
-#'FunctionalAssessment is the most important variable, with a relative influence of approximately 25.6%.
-#'MMSE and ADL are also highly influential, with relative influences of around 19% and 22%.
+#'FunctionalAssessment is the most important variable, with a relative influence of approximately 23.6%.
+#'MMSE and ADL are also highly influential, with relative influences of around 21% and 21%.
 
 
 #' Predict probabilities
-pred_probs <- predict(gbm_model, newdata = test_data, n.trees = 100, type = "response")
+pred_probs <- predict(gbm_model, newdata = test_data, n.trees = 400, type = "response")
 
 #' classify using 0.5 threshold
 pred_labels <- ifelse(pred_probs > 0.5, 1, 0)
@@ -674,10 +677,10 @@ print(conf_mat)
 #'False Positives (FP): (Number of actual 0s incorrectly predicted as 1)
 #'True Positives (TP): (Number of actual 1s correctly predicted as 1)
 #'Accuracy: (93% of predictions were correct)
-#'95% Confidence Interval (CI) for Accuracy: (0.9129, 0.9526)
+#'95% Confidence Interval (CI) for Accuracy: (0.9164, 0.9553)
 #'No Information Rate (NIR): (Accuracy if the model always predicted the majority class)
 #'P-Value [Acc > NIR]: < 2e-16 (Highly significant, indicating the model's accuracy is significantly better than random guessing)
-#'Kappa: 0.8599 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
+#'Kappa: 0.867 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
 #'Mcnemar's Test P-Value: 0.02064 (P-value for McNemar's chi-squared test, testing for symmetry of errors. A value > 0.05 suggests no significant difference in the types of errors)
 #'Sensitivity (Recall, True Positive Rate): (Proportion of actual 1s correctly identified)
 #'Specificity (True Negative Rate): (Proportion of actual 0s correctly identified)
@@ -700,7 +703,7 @@ cm_df <- cm_df %>%
 ggplot(cm_df, aes(x = Actual, y = Predicted, fill = Count)) +
   geom_tile() +
   geom_text(aes(label = Count), color = "white", size = 5) +
-  scale_fill_gradient(low = "lightblue", high = "steelblue") +
+  scale_fill_gradient(low = "lightblue", high = "blue") +
   labs(title = "Confusion Matrix", fill = "Count") +
   theme_minimal() +
   theme(aspect.ratio = 1)
@@ -711,7 +714,7 @@ roc_obj_gboost <- roc(true_labels, pred_probs)
 auc_gboost <- auc(roc_obj_gboost)
 cat("AUC:", auc_gboost, "\n")
 
-#' Area Under the ROC Curve (AUC) - 95.5%:
+#' Area Under the ROC Curve (AUC) - 95.6%:
 
 
 
@@ -720,22 +723,22 @@ optimal_threshold_gboost <- coords_obj_gboost["threshold"]
 optimal_threshold_gboost
 
 
-preds_optimal <- factor(ifelse(pred_probs > 0.3406662, 1, 0), levels = c(0, 1))
+preds_optimal <- factor(ifelse(pred_probs > 0.2428418, 1, 0), levels = c(0, 1))
 conf_matrix_optimal <- confusionMatrix(preds_optimal, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Optimal Threshold):\n")
 print(conf_matrix_optimal)
 
 
 
-cm_df_primary_default <- create_cm_df(conf_mat, "Primary (Th=0.5)")
-cm_df_primary_optimal <- create_cm_df(conf_matrix_optimal, "Primary (Th=0.3567714)")
+cm_df_default <- create_cm_df(conf_mat, "Primary (Th=0.5)")
+cm_df_optimal <- create_cm_df(conf_matrix_optimal, "Primary (Th=0.2641755)")
 
-cm_df_primary <- rbind(cm_df_primary_default, cm_df_primary_optimal)
+cm_df_primary <- rbind(cm_df_default, cm_df_optimal)
 
 ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
   geom_tile() +
   geom_text(aes(label = Freq), color = "white", size = 5) +
-  scale_fill_gradient(low = "lightblue", high = "steelblue") +
+  scale_fill_gradient(low = "lightblue", high = "blue") +
   facet_wrap(~ Model) +
   labs(title = "Confusion Matrices - Primary Model", fill = "Count") +
   theme_minimal() +
@@ -774,5 +777,6 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
   ) +
   theme_minimal() +
   theme(legend.position = "bottom") +
-  annotate("text", x = 0.75, y = 0.25, label = paste("AUC (Primary) =", round(auc_primary, 3)), color = "blue") +
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC (GLM) =", round(auc_primary, 3)), color = "cyan4") +
   annotate("text", x = 0.75, y = 0.20, label = paste("AUC (GBoost) =", round(auc_gboost, 3)), color = "red")
+
