@@ -1,16 +1,13 @@
-#''#' Setup & data import
+#'# Setup & data import
 library(tidyverse)
 library(tidymodels)
 library(magrittr)
 library(caret)
-library(gridExtra)
-library(GGally)
 library(pROC)
 library(corrplot)
 library(ggmosaic)
 library(dplyr)
 library(MASS)
-library(patchwork) #' combining plots
 library(car)
 library(latexpdf)
 library(rsample)  
@@ -25,24 +22,24 @@ data <- read.csv("alzheimers_disease_data.csv")
 
 
 
-#''#' Initial Data Exploration
+#'# Initial Data Exploration
 
-#'' Drop pointless columns like the DoctorInCharge since it is empty and no use to us and PatientID.
+#' Drop pointless columns like the DoctorInCharge since it is empty and no use to us and PatientID.
 data <- data %>% dplyr::select(-DoctorInCharge, -PatientID)
 data_numeric <- data
-#''Manual look at data
-str(data)     #'' general info about columns (type...)
-summary(data) #'' info about each column (min, max, median...)
+#'Manual look at data
+str(data)     # general info about columns (type...)
+summary(data) # info about each column (min, max, median...)
 
-sum(is.na(data)) #'' how many are NAs in ds
-colSums(is.na(data)) #'' how many are NAs in each column
+sum(is.na(data)) # how many are NAs in ds
+colSums(is.na(data)) # how many are NAs in each column
 
 #' Check for duplicated rows
 any( duplicated(data) )
 
 #' Check outcome balance
-table(data$Diagnosis)             #' AD diagnosis; 0 - No, 1 - Yes
-prop.table(table(data$Diagnosis)) #' AD diagnosis by percentage
+table(data$Diagnosis)             # AD diagnosis; 0 - No, 1 - Yes
+prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
 #' Dataset has more negatives diagnosis than positive (65%)
 
 #' Power check - events-per-variable (EPV) for logistic
@@ -165,16 +162,16 @@ ggplot(corr_long, aes(Var1, Var2, fill = r)) +
 #' t-test for numeric predictors
 t_tbl <- map_dfr(numeric_attrs_names, function(v){
   
-  #' Perform two-sample t-test comparing groups Diagnosis=0 vs Diagnosis=1 for variable v
+  # Perform two-sample t-test comparing groups Diagnosis=0 vs Diagnosis=1 for variable v
   res <- t.test(data[[v]] ~ data$Diagnosis)
   
-  #' build a one-row tibble summarizing the t-test results for this variable
+  # build a one-row tibble summarizing the t-test results for this variable
   tibble(
     Variable   = v, #' name of the predictor
     Test       = "t‑test",#' t-test
     
-    #' (difference in group means (AD - nonAD)) / (standard error of that difference)
-    #' SE is mean in difference of values if we took the same test many more times
+    # (difference in group means (AD - nonAD)) / (standard error of that difference)
+    # SE is mean in difference of values if we took the same test many more times
     Statistic  = round(res$statistic, 3),
     p_value    = round(res$p.value , 5), #' statistical significance
     Significant= ifelse(res$p.value < .05, "Yes", "No") #' flag if p < 0.05
@@ -184,18 +181,18 @@ t_tbl <- map_dfr(numeric_attrs_names, function(v){
 #' Chi-square test for categorical predictors
 chi_tbl <- map_dfr(factor_attrs_names[factor_attrs_names!="Diagnosis"], function(v){
   
-  #' perform chi-square test on contingency table of v vs Diagnosis
+  # perform chi-square test on contingency table of v vs Diagnosis
   res <- chisq.test(table(data[[v]], data$Diagnosis))
-  #' build a one-row tibble summarizing the chi-square test results for this variable
+  # build a one-row tibble summarizing the chi-square test results for this variable
   tibble(
-    Variable   = v, #' name of the predictor
-    Test       = "χ²", #' chi-square test
+    Variable   = v, # name of the predictor
+    Test       = "χ²", # chi-square test
     
-    #' (difference in group means (AD - nonAD)) / (standard error of that difference)
-    #' SE is mean in difference of values if we took the same test many more times
+    # (difference in group means (AD - nonAD)) / (standard error of that difference)
+    # SE is mean in difference of values if we took the same test many more times
     Statistic  = round(res$statistic, 3),
-    p_value    = round(res$p.value , 5), #' statistical significance
-    Significant= ifelse(res$p.value < .05, "Yes", "No") #' flag if p < 0.05
+    p_value    = round(res$p.value , 5), # statistical significance
+    Significant= ifelse(res$p.value < .05, "Yes", "No") # flag if p < 0.05
   )
 })
 
@@ -957,19 +954,19 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
 
 #'# GBM Model Results:
 
-#' Variable Importance:\newline
-#'The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.\newline
-#'FunctionalAssessment is the most important variable, with a relative influence of approximately 23.9%.\newline
-#'MMSE and ADL are also highly influential, with relative influences of around 21.7% and 20.7%, respectively.\newline
-#'MemoryComplaints and BehavioralProblems have moderate influence (around 15.7% and 13.3%).\newline
-#'SleepQuality and CholesterolHDL appear to have the least influence on the model's predictions (2.7% and 1.9%).\newline
+#' Variable Importance:
+#'The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
+#'FunctionalAssessment is the most important variable, with a relative influence of approximately 23.9%.
+#'MMSE and ADL are also highly influential, with relative influences of around 21.7% and 20.7%, respectively.
+#'MemoryComplaints and BehavioralProblems have moderate influence (around 15.7% and 13.3%).
+#'SleepQuality and CholesterolHDL appear to have the least influence on the model's predictions (2.7% and 1.9%).
 
-#' Confusion Matrix and Statistics:\newline
-#'The confusion matrix on the test set (assuming this matrix was generated from the GBM model's predictions) shows the following:\newline
-#'True Negatives (TN): 386 (Number of actual 0s correctly predicted as 0)\newline
-#'False Negatives (FN): 25 (Number of actual 1s incorrectly predicted as 0)\newline
-#'False Positives (FP): 13 (Number of actual 0s incorrectly predicted as 1)\newline
-#'True Positives (TP): 220 (Number of actual 1s correctly predicted as 1)\newline
+#' Confusion Matrix and Statistics:
+#'The confusion matrix on the test set (assuming this matrix was generated from the GBM model's predictions) shows the following:
+#'True Negatives (TN): 386 (Number of actual 0s correctly predicted as 0)
+#'False Negatives (FN): 25 (Number of actual 1s incorrectly predicted as 0)
+#'False Positives (FP): 13 (Number of actual 0s incorrectly predicted as 1)
+#'True Positives (TP): 220 (Number of actual 1s correctly predicted as 1)
 
 #' Performance Metrics:
 #'Accuracy: 0.941 (94.1% of predictions were correct)
