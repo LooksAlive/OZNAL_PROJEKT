@@ -295,79 +295,45 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 
 
 
-#'# Requirements Analysis & Model Choice
+# Based on EDA we selected 5 core predictors (MMSE, ADL, MemoryComplaints, BehavioralProblems, FunctionalAssessment) and concluded our models must check these requirements:
+# -Handle a binary outcome (Diagnosis ∈ {0,1})
+# -Accept a mix of numeric & factor predictors
+# -Work with 0% missing data (we have no NAs)
+# -Handle class imbalance (65% non-AD / 35% AD)
 
-#' R-1 picked candidate model families 
-#' We need algorithms that can handle:
-#' -binary outcome (Diagnosis 0 / 1),
-#' -a mix of numeric and factor predictors,
-#' -no missing data,
-#' -~2 000 observations  vs  ≤ 30 predictors.
+# Algorithms selected:
+# 1) Logistic Regression (GLM)
+#    -Models log-odds of AD as a weighted sum of predictors.
+#    -Each coefficient shows how much that feature shifts AD risk.
+#    -Works well on our 65/35 class split. 
+#    -We’ll pick the best probability cutoff via cross-validation.
+# 2) Gradient Boosting Machine (GBM)
+#    -Builds many small decision trees in sequence to improve predictions.
+#    -Automatically handles both numeric and factor inputs without extra preprocessing.
+#    -Captures non-linear effects and feature interactions that a straight-line model might miss.
 
-
-#' Comparison
-#' Logistic GLM:
-#'  -Provides odds ratios that test H1 directly. 
-#'  - Suitable choice given the binary outcome, 
-#'  - lack of strong multicollinearity
-#'  - Normality of predictors is not required.
-#'  - No outliers
-#'  - we have 2149 samples, it needs at least 500 samples
-#'  - All assumptions met.
-
-#' Decision-Tree: 
-#'  -Handles mixed predictors, no distributional assumptions, produces transparent IF-THEN rules. 
-
-#' Random-Forest:
-#'  -Likely higher raw accuracy than a single tree, but interpretability falls.
-#'  -We keep it only for feature-importance exploration, not as a deployable model.
-
-#' LDA: 
-#'  -Dropped - requires all-numeric and multivariate normality, both were violated here. 
-#'  - also requires normality
-#' -Would add no value beyond GLM.
-
-#' SVM
-#' - While SVM could potentially work, Logistic Regression is often more 
-#' interpretable for binary outcomes and directly models the probability. 
-#' The lack of strong evidence for complex non-linear relationships in the 
-#' predictors themselves didn't necessitate the complexity of SVM with kernels.
-
-#' Planned modeling path
-#' primary_model <- Logistic GLM: for inference / H1 test
-#' secondary_model <- Decision Tree: benchmark with explanations
-#' exploratory_model <- Random Forest: optional accuracy check
+# We will therefore fit:
+# -Primary_model <- Logistic GLM
+# -Exploratory_model <- GBM
 
 
+# We picked Stratified 10-fold cross-validation:
+# -The data is divided into 10 equal “folds” of ~215 observations each.
+# -In each of 10 iterations:
+# --9 folds (≈1,934 samples) are used to train the model.
+# --The remaining 1 fold (≈215 samples) is held out to test it.
+# -Because we set strata = "Diagnosis", each fold preserves the 65/35 AD/non-AD ratio.
+# -Over all folds, every sample is used exactly once for testing and nine times for training.
+# -Averaging metrics (e.g. AUC, accuracy) across folds gives a robust estimate of expected performance and its variability.
 
-
-
-
-
-#'# 5. Data Spending
-#' We pick one technique that: 
-#'  -Gives reliable performance estimates for our dataset  
-#'  -Keeps the 65 / 35 class ratio in every split  
-#'  -Is light-weight to run GLM, Tree and RF models repeatedly
-#'
-#' Chosen method:  
-#'  -STRATIFIED 10-fold cross-validation
-#'  –Ten folds - roughly 1 900 rows for training and roughly 215 for testing each round.  
-#'  –With 760 positive cases total, every fold still has roughly 75 AD patients
-#'   --metrics such as Sensitivity should be stable.  
-#'  –Computational cost is slight (10 fits per model) yet variance is much lower than a single 70 / 30 split ((estimate won't be overly optimistic or pessimistic)).
-
-
-
-set.seed(65778275) #' reproducible folds
-cv_splits <- vfold_cv(
-  data, 
-  v      = 10, #' 10-fold
-  strata = Diagnosis  #' keeps class balance in each fold
+set.seed(65778275)
+cv_splits <- rsample::vfold_cv(
+  data,
+  v      = 10, # 10 folds
+  strata = "Diagnosis" # keep class balance in each fold
 )
-
 print(cv_splits)
-#' rsample object with 10 splits and class-stratification information
+
 
 
 
