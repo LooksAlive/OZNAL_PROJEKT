@@ -44,10 +44,10 @@ prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
 
 #' Convert low-cardinality (few unique values) numerics to factors
 for (col_name in names(data)) {
-  #' Check if column type is numeric and has less than 6 unique values
+  # Check if column type is numeric and has less than 6 unique values
   if (is.numeric(data[[col_name]]) && length(unique(data[[col_name]])) <= 5) {
     data <- data %>%
-      #' unquote string to process as symbol (was headache without it)
+      # unquote string to process as symbol (was headache without it)
       mutate(!!sym(col_name) := as.factor(!!sym(col_name)))
   }
 }
@@ -335,36 +335,7 @@ cv_splits <- rsample::vfold_cv(
 print(cv_splits)
 
 
-
-
-
-#' More Reliable -  Gives a better estimate of how well your model will work on new, unseen data compared to a single train-test split.
-#' Efficient Data Use - Uses 2149 samples more effectively for both training and evaluation.
-#' Checks Stability - Shows if your model's performance is consistent across different parts of your data.
-#' Less Biased - Reduces the risk of your evaluation being misleading due to a lucky or unlucky data split.
-#' Standard Practice - It's the common and recommended way to evaluate classification models like logistic regression.
-
-
-
-
-
-
-library(pmsampsize)
-pmsampsize(
-  type = "b",              # binary outcome
-  cstatistic = 0.85,       # use AUC estimate if known, or guess ~0.85
-  parameters = 9,          # number of predictor parameters
-  prevalence = 0.35,       # proportion of positive outcome (e.g. Diagnosis = 1)
-  shrinkage = 0.9          # to limit overfitting (default)
-)
-#' the test shows us that:
-#' Minimum sample size required for new model development based on user inputs = 350
-
-
-
-
-
-#'# Hypothesis test
+#'# Model Fiting
 
 #' Split dataset into training and testing sets
 set.seed(235455)
@@ -445,27 +416,8 @@ exp(cbind(OddsRatios = coef(model_primary),   # exponentiate → odds ratios
 
 
 
-#' Checking for the 3 Conditions
+#' Checking Conditions for residuals
 
-#' 1. Randomness (Visual Check from QQ-Plot):
-#'    If the points generally follow the red line, it suggests the residuals are
-#'      not systematically deviating from the expected distribution under the model.
-#'    Large deviations, especially curves or S-shapes, might indicate a lack of randomness
-#'      or model misspecification.
-
-#' 2. Outliers (Visual Check from QQ-Plot):
-#'    Points that are far away from the red line, particularly at the extreme ends (tails)
-#'      of the plot, can be potential outliers. These are observations that are much more
-#'      or less extreme than expected by the model.
-
-#' 3. Heteroscedasticity (Less Directly Assessed by QQ-Plot):
-#'    A QQ-plot primarily assesses the distribution of the residuals, not directly their
-#'      variance across predicted values.
-#'    However, severe deviations from the line might indirectly hint at issues with the
-#'      variance if the model assumptions are violated.
-#'    To more directly assess heteroscedasticity, the "Residuals vs. Predicted Values" plot
-#'      (as shown in the previous response) is more informative. Look for a funnel shape
-#'      or increasing/decreasing spread of residuals as predicted probabilities change.
 
 residuals_primary <- residuals(model_primary, type = "deviance")
 
@@ -481,6 +433,14 @@ car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Linear Regress
 #'  If the points fall roughly along the red line, the residuals are approximately normally distributed.
 #'  Deviations from the line, especially S-shapes or curves, suggest non-normality.
 #'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
+
+fitted_values_primary <- fitted(model_primary) # Get fitted values
+
+# Create the plot
+plot(fitted_values_primary, residuals_primary,
+     xlab = "Fitted Values", ylab = "Deviance Residuals",
+     main = "Residuals vs. Fitted Values Plot")
+abline(h = 0, col = "red", lty = 2)  # Add a horizontal line at y=0
 
 #'# Statistical Tests on Residuals
 
@@ -638,7 +598,7 @@ cat("No Information Rate:", no_information_rate, "\n")
 
 data_for_gbm <- train_data[, c("Diagnosis", predictors)]
 
-#' Explicitly convert Diagnosis to a factor with specific levels and labels
+#' convert Diagnosis to a factor with specific levels and labels - for train funciton
 data_for_gbm$Diagnosis <- factor(data_for_gbm$Diagnosis,
                                  levels = c(0, 1), #' Ensure levels are 0 and 1 (numeric)
                                  labels = c("NoAD", "AD")) #' Label them for clarity
@@ -690,6 +650,12 @@ gbm_model <- gbm(
 #' summary - variable importance
 summary(gbm_model)
 
+#' Variable Importance:
+#'The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
+#'FunctionalAssessment is the most important variable, with a relative influence of approximately 25.6%.
+#'MMSE and ADL are also highly influential, with relative influences of around 19% and 22%.
+
+
 #' Predict probabilities
 pred_probs <- predict(gbm_model, newdata = test_data, n.trees = 100, type = "response")
 
@@ -702,6 +668,27 @@ true_labels <- test_data$Diagnosis
 #' Confusion matrix
 conf_mat <- confusionMatrix(as.factor(pred_labels), as.factor(true_labels), positive = "1")
 print(conf_mat)
+
+#'True Negatives (TN): (Number of actual 0s correctly predicted as 0)
+#'False Negatives (FN): (Number of actual 1s incorrectly predicted as 0)
+#'False Positives (FP): (Number of actual 0s incorrectly predicted as 1)
+#'True Positives (TP): (Number of actual 1s correctly predicted as 1)
+#'Accuracy: (93% of predictions were correct)
+#'95% Confidence Interval (CI) for Accuracy: (0.9129, 0.9526)
+#'No Information Rate (NIR): (Accuracy if the model always predicted the majority class)
+#'P-Value [Acc > NIR]: < 2e-16 (Highly significant, indicating the model's accuracy is significantly better than random guessing)
+#'Kappa: 0.8599 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
+#'Mcnemar's Test P-Value: 0.02064 (P-value for McNemar's chi-squared test, testing for symmetry of errors. A value > 0.05 suggests no significant difference in the types of errors)
+#'Sensitivity (Recall, True Positive Rate): (Proportion of actual 1s correctly identified)
+#'Specificity (True Negative Rate): (Proportion of actual 0s correctly identified)
+#'Positive Predictive Value (Precision): (Proportion of predicted 1s that were actually 1s)
+#'Negative Predictive Value: (Proportion of predicted 0s that were actually 0s)
+#'Prevalence: (Proportion of the positive class (1) in the test set)
+#'Detection Rate: (Proportion of the positive class correctly identified out of the total number of instances)
+#'Detection Prevalence: (Proportion of instances predicted as positive)
+#'Balanced Accuracy: (Average of sensitivity and specificity)
+#'Positive' Class: 1 (Indicates that class '1' was treated as the positive class for sensitivity and specificity calculations)
+
 
 cm_df <- as.data.frame(conf_mat$table)
 
@@ -724,7 +711,8 @@ roc_obj_gboost <- roc(true_labels, pred_probs)
 auc_gboost <- auc(roc_obj_gboost)
 cat("AUC:", auc_gboost, "\n")
 
-#' Accuracy reached 95.5%
+#' Area Under the ROC Curve (AUC) - 95.5%:
+
 
 
 coords_obj_gboost <- coords(roc_obj_gboost, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
@@ -788,41 +776,3 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
   theme(legend.position = "bottom") +
   annotate("text", x = 0.75, y = 0.25, label = paste("AUC (Primary) =", round(auc_primary, 3)), color = "blue") +
   annotate("text", x = 0.75, y = 0.20, label = paste("AUC (GBoost) =", round(auc_gboost, 3)), color = "red")
-
-
-#'# GBM Model Results:
-
-#' Variable Importance:
-#'The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
-#'FunctionalAssessment is the most important variable, with a relative influence of approximately 23.9%.
-#'MMSE and ADL are also highly influential, with relative influences of around 21.7% and 20.7%, respectively.
-#'MemoryComplaints and BehavioralProblems have moderate influence (around 15.7% and 13.3%).
-#'SleepQuality and CholesterolHDL appear to have the least influence on the model's predictions (2.7% and 1.9%).
-
-#' Confusion Matrix and Statistics:
-#'The confusion matrix on the test set (assuming this matrix was generated from the GBM model's predictions) shows the following:
-#'True Negatives (TN): 386 (Number of actual 0s correctly predicted as 0)
-#'False Negatives (FN): 25 (Number of actual 1s incorrectly predicted as 0)
-#'False Positives (FP): 13 (Number of actual 0s incorrectly predicted as 1)
-#'True Positives (TP): 220 (Number of actual 1s correctly predicted as 1)
-
-#' Performance Metrics:
-#'Accuracy: 0.941 (94.1% of predictions were correct)
-#'95% Confidence Interval (CI) for Accuracy: (0.9199, 0.9579)
-#'No Information Rate (NIR): 0.6196 (Accuracy if the model always predicted the majority class)
-#'P-Value [Acc > NIR]: < 2e-16 (Highly significant, indicating the model's accuracy is significantly better than random guessing)
-#'Kappa: 0.8736 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
-#'Mcnemar's Test P-Value: 0.07435 (P-value for McNemar's chi-squared test, testing for symmetry of errors. A value > 0.05 suggests no significant difference in the types of errors)
-#'Sensitivity (Recall, True Positive Rate): 0.8980 (Proportion of actual 1s correctly identified)
-#'Specificity (True Negative Rate): 0.9674 (Proportion of actual 0s correctly identified)
-#'Positive Predictive Value (Precision): 0.9442 (Proportion of predicted 1s that were actually 1s)
-#'Negative Predictive Value: 0.9392 (Proportion of predicted 0s that were actually 0s)
-#'Prevalence: 0.3804 (Proportion of the positive class (1) in the test set)
-#'Detection Rate: 0.3416 (Proportion of the positive class correctly identified out of the total number of instances)
-#'Detection Prevalence: 0.3618 (Proportion of instances predicted as positive)
-#'Balanced Accuracy: 0.9327 (Average of sensitivity and specificity)
-#'Positive' Class: 1 (Indicates that class '1' was treated as the positive class for sensitivity and specificity calculations)
-
-#' Area Under the ROC Curve (AUC):
-#'AUC: 0.9534141 (This indicates excellent discriminatory power of the GBM model. An AUC of 0.95 suggests a high ability to distinguish between the positive and negative classes.)
-
