@@ -293,7 +293,10 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 
 
 #'# Hypothesis formulation
-#' H0: The classification performance (e.g. AUC) of the base model built on MMSE, FunctionalAssessment, ADL, MemoryComplaints and BehavioralProblems is yealds little no none performance increase when we add the composite LRI. There is no gain from including the lifestyle index.
+#' H1: Age, Gender, FamilyHistoryAlzheimers, HeadInjury, MMSE, FunctionalAssessment, ADL,
+#'     MemoryComplaints, BehavioralProblems, CholesterolHDL, SleepQuality, EducationLevel,
+#'     and Ethnicity are all significantly associated with Alzheimer’s Disease diagnosis.
+
 
 
 #' Based on EDA we selected 5 core predictors (MMSE, ADL, MemoryComplaints, BehavioralProblems, FunctionalAssessment) and concluded our models must check these requirements:
@@ -386,14 +389,14 @@ model_primary <- glm(
 )
 
 summary(model_primary)
-#' #  Coefficients:
-#' #  –FunctionalAssessment: higher scores make AD less likely  
-#' #  –ADL: higher daily-living scores make AD less likely  
-#' #  –MemoryComplaints & BehavioralProblems: if present, these strongly increase AD risk  
-#' #  –MMSE: better cognition scores make AD less likely  
-#' #  –SleepQuality: weak evidence for protection (p≈0.05)  
-#' #  –HDL cholesterol: small increase in AD risk per unit rise  
-#' #  In other words, all predictors except SleepQuality are clearly significant at p<0.05.
+#'  Coefficients:
+#'  –FunctionalAssessment: higher scores make AD less likely  
+#'  –ADL: higher daily-living scores make AD less likely  
+#'  –MemoryComplaints & BehavioralProblems: if present, these strongly increase AD risk  
+#'  –MMSE: better cognition scores make AD less likely  
+#'  –SleepQuality: weak evidence for protection (p≈0.05)  
+#'  –HDL cholesterol: small increase in AD risk per unit rise  
+#'  In other words, all predictors except SleepQuality are clearly significant at p<0.05.
 
 #' Evaluate that final GLM on the held-out 30%
 test_probs <- predict(model_primary, test_data, type = "response")
@@ -707,63 +710,31 @@ cat("No Information Rate:", no_information_rate, "\n")
 
 
 
-
-
-
-#'# Cross-validation for GBM model
-
-data_for_gbm <- train_data[, c("Diagnosis", predictors)]
-
-#' convert Diagnosis to a factor with specific levels and labels - for train funciton
-data_for_gbm$Diagnosis <- factor(data_for_gbm$Diagnosis,
-                                 levels = c(0, 1), #' Ensure levels are 0 and 1 (numeric)
-                                 labels = c("NoAD", "AD")) #' Label them for clarity
-
-#' control for cross-validation
-train_control <- trainControl(
-  method = "cv",
-  number = 10,
-  classProbs = TRUE,
-)
-
-#' Train
-gbm_model_cv <- train(
-  Diagnosis ~ .,
-  data = data_for_gbm,
-  method = "gbm",
-  trControl = train_control,
-  metric = "Accuracy",
-  tuneGrid = expand.grid(
-    n.trees = 400,
-    shrinkage = 0.1,
-    interaction.depth = 5,
-    n.minobsinnode = 10
-  ),
-  verbose = FALSE
-)
-
-print(gbm_model_cv)
 #' average Accuracy for GBM cross-validation appears to be Average 94%,
 #' so it performs very well. also Kappa is 0.867 which is also very good result.
 
+train_data_gbm <- train_data
+train_data_gbm$Diagnosis <- as.numeric(as.character(train_data_gbm$Diagnosis))
+
 gbm_model <- gbm(
   Diagnosis ~ ., # Formula: Predict 'Diagnosis' using all other columns in the specified data
-  data = train_data[, c("Diagnosis", predictors)], # Data frame and the columns to be used for training (Diagnosis and the selected predictors)
+  data = train_data_gbm[, c("Diagnosis", predictors)], # Data frame and the columns to be used for training (Diagnosis and the selected predictors)
   distribution = "bernoulli", # logistic - Specifies the loss function to be used. "bernoulli" is appropriate for binary classification (0 or 1 outcomes like Diagnosis)
   n.trees = 400, # The number of boosting iterations to perform. Each tree is built sequentially, trying to correct the errors of the previous trees. More trees can lead to better performance but also increased risk of overfitting and longer training time.
   shrinkage = 0.1, # Also known as the learning rate. It scales the contribution of each tree. A smaller shrinkage value (e.g., 0.01, 0.1) makes the learning slower but often results in more robust models that generalize better.
   interaction.depth = 5, # The maximum depth of each tree. It controls the complexity of the interactions between predictors that the model can capture. A depth of 1 means the model is additive (no interactions), a depth of 2 allows for two-way interactions, and so on. Higher values can capture more complex relationships but also increase the risk of overfitting.
   n.minobsinnode = 10, # The minimum number of observations in the terminal nodes (leaves) of each tree. This parameter helps to regularize the model and prevent overfitting by ensuring that leaves are not too specific to small subsets of the training data.
-  verbose = FALSE # A logical value indicating whether to print progress and performance updates during the training process. FALSE means no output during training.
+  verbose = FALSE, # A logical value indicating whether to print progress and performance updates during the training process. FALSE means no output during training.
+  cv.folds = 10
 )
 
 #' summary - variable importance
 summary(gbm_model)
 
 #' Variable Importance:
-#'The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
-#'FunctionalAssessment is the most important variable, with a relative influence of approximately 23.6%.
-#'MMSE and ADL are also highly influential, with relative influences of around 21% and 21%.
+#' The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
+#' MSE is the most important variable, with a relative influence of approximately 23.87%.
+#' MMSE and ADL are also highly influential, with relative influences of around 23.85% and 20.5%.
 
 
 #' Predict probabilities
