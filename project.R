@@ -315,6 +315,16 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 #'    -Builds many small decision trees in sequence to improve predictions.
 #'    -Automatically handles both numeric and factor inputs without extra preprocessing.
 #'    -Captures non-linear effects and feature interactions that a straight-line model might miss.
+   
+#’ Other methods considered (not fitted):
+#’ 3) Linear Discriminant Analysis (LDA)
+#’    – Assumes multivariate normality of the numeric predictors in each class.
+#’    – Requires all inputs to be numeric and homoscedastic.
+#’    – Dropped because we have mixed factor/numeric features and normality assumptions are violated.
+#’ 4) Support Vector Machine (SVM)
+#’    – Can model non-linear decision boundaries via kernel functions.
+#’    – Requires careful kernel/parameter tuning and scaling. Lower interpretability.
+#’    – Dropped due to lack of evidence for complex non-linear structure in EDA and our priority on model transparency.
 
 #' We will therefore fit:
 #' -Primary_model <- Logistic GLM
