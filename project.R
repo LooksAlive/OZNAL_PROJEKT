@@ -330,30 +330,97 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 # -Over all folds, every sample is used exactly once for testing and nine times for training.
 # -Averaging metrics (e.g. AUC, accuracy) across folds gives a robust estimate of expected performance and its variability.
 
+#' Build cv_splits (stratified 10-fold CV)
 set.seed(65778275)
 cv_splits <- rsample::vfold_cv(
   data,
   v      = 10, # 10 folds
-  strata = "Diagnosis" # keep class balance in each fold
+  strata = "Diagnosis" # keep 65/35 AD vs non-AD ratio in each fold
 )
 print(cv_splits)
+
+
+#' Use those splits to estimate CV performance (no new data is created here. fit_resamples will train on 9/10 folds and test on the held-out 1/10 in each round)
+#' Specify a logistic regression model
+glm_spec <- logistic_reg() %>% set_engine("glm")  
+
+#' Build a workflow that bundles the model and the formula together
+wf <- workflow() %>%
+  add_model(glm_spec) %>% # attach the logistic regression spec
+  add_formula(
+    Diagnosis ~ FunctionalAssessment + ADL +
+      MemoryComplaints + BehavioralProblems +
+      MMSE + SleepQuality + CholesterolHDL
+  ) # define the predictors to use in one step
+
+#' Fit the workflow across each CV split
+glm_res <- fit_resamples(
+  wf,
+  resamples = cv_splits,
+  metrics    = metric_set(roc_auc, accuracy), # compute AUC and accuracy on each held-out fold
+  control    = control_resamples(save_pred = TRUE) # keep the per-fold predictions for diagnostics
+)
+
+#' Display results of each metric across the 10 folds
+collect_metrics(glm_res)
+#' We see:
+#' -Mean accuracy = 0.846 (+/-0.008 -> std_err): on average, the model correctly classifies 84.6% of cases
+#' -Mean ROC AUC  = 0.903 (+/-0.005 -> std_err): strong discrimination between AD vs. non-AD
+#' The low standard errors across the 10 folds indicate that performance is stable and not overly sensitive to any single split.
 
 
 #'# Model Fiting
 
 #' Split dataset into training and testing sets
-set.seed(235455)
-train_index <- createDataPartition(data_numeric$Diagnosis, p = 0.7, list = FALSE)
-train_data <- data_numeric[train_index, ]
-test_data  <- data_numeric[-train_index, ]
+set.seed(65778275)
+train_index <- createDataPartition(data$Diagnosis, p = 0.7, list = FALSE)
+train_data  <- data[train_index, ]
+test_data   <- data[-train_index, ]
 
+#' # Fit the primary logistic regression model on the training data
 model_primary <- glm(
-  Diagnosis ~ .,
-  data = train_data[, c("Diagnosis", predictors)],
+  Diagnosis ~ FunctionalAssessment + ADL +
+    MemoryComplaints + BehavioralProblems +
+    MMSE + SleepQuality + CholesterolHDL,
+  data   = train_data,
   family = binomial
 )
 
 summary(model_primary)
+#' #  Coefficients:
+#' #  –FunctionalAssessment: higher scores make AD less likely  
+#' #  –ADL: higher daily-living scores make AD less likely  
+#' #  –MemoryComplaints & BehavioralProblems: if present, these strongly increase AD risk  
+#' #  –MMSE: better cognition scores make AD less likely  
+#' #  –SleepQuality: weak evidence for protection (p≈0.05)  
+#' #  –HDL cholesterol: small increase in AD risk per unit rise  
+#' #  In other words, all predictors except SleepQuality are clearly significant at p<0.05.
+
+#' Evaluate that final GLM on the held-out 30%
+test_probs <- predict(model_primary, test_data, type = "response")
+test_pred_class <- factor(ifelse(test_probs > 0.5, "1", "0"),
+                          levels = c("0","1"))
+
+#' Build a tibble with exactly two columns for roc_auc to handle factor
+df_pred <- tibble(
+  truth   = factor(test_data$Diagnosis, levels = c(0, 1)),
+  .pred_1 = test_probs
+)
+
+conf   <- confusionMatrix(test_pred_class, factor(test_data$Diagnosis))
+res_auc <- df_pred %>%
+  roc_auc(truth = truth, .pred_1, event_level = "second")
+
+print(conf)
+#' Accuracy = 0.8339: model correctly classifies 83.4% of cases at 0.5 cutoff  
+#' No Information Rate = 0.646: always predicting “no AD” for every patient, which is 64.6% of the data
+#' Sensitivity = 0.8870: correctly identifies 88.7% of AD cases  
+#' Specificity = 0.7368: correctly identifies 73.7% of non-AD cases  
+#' Balanced Acc. = 0.8119: average of sensitivity & specificity  
+#' 
+print(res_auc)
+#' AUC:  
+#' This nearly matches the CV AUC (~0.90), confirming strong discrimination
 
 
 library(leaps)
