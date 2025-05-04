@@ -1,9 +1,6 @@
-################################################################################
-########################## Setup & data import #################################
-################################################################################
+#''#' Setup & data import
 library(tidyverse)
 library(tidymodels)
-#library(ggplot2)
 library(magrittr)
 library(caret)
 library(gridExtra)
@@ -13,55 +10,54 @@ library(corrplot)
 library(ggmosaic)
 library(dplyr)
 library(MASS)
-library(patchwork) # combining plots
-library(car)    # Levene's test for homoscedasticit
+library(patchwork) #' combining plots
+library(car)
 library(latexpdf)
 library(rsample)  
 library(purrr)
 library(gbm)
 library(randtests)
 library(lmtest)
-#library(shiny)
+#'library(shiny)
 
-getwd()
+
 data <- read.csv("alzheimers_disease_data.csv")
 
 
 
-################################################################################
-############################## Initial Data Exploration ########################
-################################################################################
-# Drop pointless columns like the DoctorInCharge since it is empty and no use to us and PatientID.
+#''#' Initial Data Exploration
+
+#'' Drop pointless columns like the DoctorInCharge since it is empty and no use to us and PatientID.
 data <- data %>% dplyr::select(-DoctorInCharge, -PatientID)
 data_numeric <- data
-#Manual look at data
-str(data)     # general info about columns (type...)
-summary(data) # info about each column (min, max, median...)
+#''Manual look at data
+str(data)     #'' general info about columns (type...)
+summary(data) #'' info about each column (min, max, median...)
 
-sum(is.na(data)) # how many are NAs in ds
-colSums(is.na(data)) # how many are NAs in each column
+sum(is.na(data)) #'' how many are NAs in ds
+colSums(is.na(data)) #'' how many are NAs in each column
 
-# Check for duplicated rows
+#' Check for duplicated rows
 any( duplicated(data) )
 
-# Check outcome balance
-table(data$Diagnosis)             # AD diagnosis; 0 - No, 1 - Yes
-prop.table(table(data$Diagnosis)) # AD diagnosis by percentage
-# Dataset has more negatives diagnosis than positive (65%)
+#' Check outcome balance
+table(data$Diagnosis)             #' AD diagnosis; 0 - No, 1 - Yes
+prop.table(table(data$Diagnosis)) #' AD diagnosis by percentage
+#' Dataset has more negatives diagnosis than positive (65%)
 
-# Power check - events-per-variable (EPV) for logistic
-events_pos <- sum(data$Diagnosis == 1) # 760AD
-p <- 7 # of covariates (measurable variable that has a statistical relationship with the dependent variable) in H1 model
+#' Power check - events-per-variable (EPV) for logistic
+events_pos <- sum(data$Diagnosis == 1) #' 760AD
+p <- 7 #' of covariates (measurable variable that has a statistical relationship with the dependent variable) in H1 model
 EPV <- events_pos / p
 cat("Events-per-variable (EPV) =", round(EPV, 1), "\n")
-# EPV is 108 which is > 10 which is generally considered adequate for stable logistic estimates
+#' EPV is 108 which is > 10 which is generally considered adequate for stable logistic estimates
 
-# Convert low-cardinality (few unique values) numerics to factors
+#' Convert low-cardinality (few unique values) numerics to factors
 for (col_name in names(data)) {
-  # Check if column type is numeric and has less than 6 unique values
+  #' Check if column type is numeric and has less than 6 unique values
   if (is.numeric(data[[col_name]]) && length(unique(data[[col_name]])) <= 5) {
     data <- data %>%
-      # unquote string to process as symbol (was headache without it)
+      #' unquote string to process as symbol (was headache without it)
       mutate(!!sym(col_name) := as.factor(!!sym(col_name)))
   }
 }
@@ -87,21 +83,13 @@ outlier_df <- data.frame(Variable = names(outlier_summary),
                          Outlier_Count = as.integer(outlier_summary))
 print(outlier_df)
 
-# TODO: toto az do vyhodnocovania modelu, vymazat, ale pozor lebo to je nizsie pouzita premenna
-# VIF (Variance Inflation Factor for the logistic model
-vif_vals <- car::vif(glm(Diagnosis ~ Age + Gender + FamilyHistoryAlzheimers +
-                           HeadInjury + MMSE + FunctionalAssessment,
-                         data = data, family = binomial))
-print(vif_vals)
-# There are no outliers in numeric data
-
 #' Normality
 normality_p_values <- apply(numeric_attrs, 2, function(x) {
   shapiro.test(x)$p.value
 })
 print(sort(normality_p_values, decreasing = T))
-# P-values < 0.05 suggest a deviation from normality. Consider transformations if needed.
-# we can observe that none or numeric attributes in normally distributed.
+#' P-values < 0.05 suggest a deviation from normality. Consider transformations if needed.
+#' we can observe that none or numeric attributes in normally distributed.
 
 
 data %>%
@@ -123,7 +111,7 @@ ggplot(numeric_long, aes(x = value, fill = Diagnosis)) +
        x = "Value", y = "Density") +
   theme_minimal()
 
-# Yet another one visualization, now density functions with respect to Diagnosis results
+#' Yet another one visualization, now density functions with respect to Diagnosis results
 
 
 factor_data <- data %>%
@@ -147,7 +135,7 @@ factor_data %>%
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-# Here we can see ratios/proportions for categoricals 
+#' Here we can see ratios/proportions for categoricals 
 
 
 corr_mat <- cor(data_numeric, use = "pairwise.complete.obs")
@@ -170,48 +158,48 @@ ggplot(corr_long, aes(Var1, Var2, fill = r)) +
     axis.text.x = element_text(angle = 45, hjust = 1),
     panel.grid  = element_blank()
   )
-# From this plot we see that MMSE, ADL and FunctionalAssessment show the strongest (absolute) correlations with Diagnosis, followed by SleepQuality and CholesterolHDL. We therefore follow up withformal group-difference tests on all predictors.
+#' From this plot we see that MMSE, ADL and FunctionalAssessment show the strongest (absolute) correlations with Diagnosis, followed by SleepQuality and CholesterolHDL. We therefore follow up withformal group-difference tests on all predictors.
 
 
 
-# t-test for numeric predictors
+#' t-test for numeric predictors
 t_tbl <- map_dfr(numeric_attrs_names, function(v){
   
-  # Perform two-sample t-test comparing groups Diagnosis=0 vs Diagnosis=1 for variable v
+  #' Perform two-sample t-test comparing groups Diagnosis=0 vs Diagnosis=1 for variable v
   res <- t.test(data[[v]] ~ data$Diagnosis)
   
-  # build a one-row tibble summarizing the t-test results for this variable
+  #' build a one-row tibble summarizing the t-test results for this variable
   tibble(
-    Variable   = v, # name of the predictor
-    Test       = "t‑test",# t-test
+    Variable   = v, #' name of the predictor
+    Test       = "t‑test",#' t-test
     
-    # (difference in group means (AD - nonAD)) / (standard error of that difference)
-    # SE is mean in difference of values if we took the same test many more times
+    #' (difference in group means (AD - nonAD)) / (standard error of that difference)
+    #' SE is mean in difference of values if we took the same test many more times
     Statistic  = round(res$statistic, 3),
-    p_value    = round(res$p.value , 5), # statistical significance
-    Significant= ifelse(res$p.value < .05, "Yes", "No") # flag if p < 0.05
+    p_value    = round(res$p.value , 5), #' statistical significance
+    Significant= ifelse(res$p.value < .05, "Yes", "No") #' flag if p < 0.05
   )
 })
 
-# Chi-square test for categorical predictors
+#' Chi-square test for categorical predictors
 chi_tbl <- map_dfr(factor_attrs_names[factor_attrs_names!="Diagnosis"], function(v){
   
-  # perform chi-square test on contingency table of v vs Diagnosis
+  #' perform chi-square test on contingency table of v vs Diagnosis
   res <- chisq.test(table(data[[v]], data$Diagnosis))
-  # build a one-row tibble summarizing the chi-square test results for this variable
+  #' build a one-row tibble summarizing the chi-square test results for this variable
   tibble(
-    Variable   = v, # name of the predictor
-    Test       = "χ²", # chi-square test
+    Variable   = v, #' name of the predictor
+    Test       = "χ²", #' chi-square test
     
-    # (difference in group means (AD - nonAD)) / (standard error of that difference)
-    # SE is mean in difference of values if we took the same test many more times
+    #' (difference in group means (AD - nonAD)) / (standard error of that difference)
+    #' SE is mean in difference of values if we took the same test many more times
     Statistic  = round(res$statistic, 3),
-    p_value    = round(res$p.value , 5), # statistical significance
-    Significant= ifelse(res$p.value < .05, "Yes", "No") # flag if p < 0.05
+    p_value    = round(res$p.value , 5), #' statistical significance
+    Significant= ifelse(res$p.value < .05, "Yes", "No") #' flag if p < 0.05
   )
 })
 
-# Combine both result tables & sort by p-value
+#' Combine both result tables & sort by p-value
 test_results <- bind_rows(t_tbl, chi_tbl) %>% 
                 arrange(p_value)
 print(test_results)
@@ -223,15 +211,15 @@ predictors <- c(
 )
 
 
-# Conclusion:
-# -MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment all show extremely low p-values (0), indicating highly significant group differences. They are strong numeric predictors.
-# -SleepQuality (p = 0.0087) and CholesterolHDL (p = 0.049) semm to be also significant.
-# -All other tests have p > 0.05, so no strong evidence.
-# --MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment, then consider SleepQuality & CholHDL in models as they also displayed p-values < 0.05.
+#' Conclusion:
+#' -MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment all show extremely low p-values (0), indicating highly significant group differences. They are strong numeric predictors.
+#' -SleepQuality (p = 0.0087) and CholesterolHDL (p = 0.049) semm to be also significant.
+#' -All other tests have p > 0.05, so no strong evidence.
+#' --MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment, then consider SleepQuality & CholHDL in models as they also displayed p-values < 0.05.
 
 
-# Visualizing the significant predictors by Diagnosis
-# These boxplots and barplots illustrate the distribution of each variable in the No-AD (0) vs AD (1) groups, confirming the statistical differences we observed in the t-tests and chi-square tests.
+#' Visualizing the significant predictors by Diagnosis
+#' These boxplots and barplots illustrate the distribution of each variable in the No-AD (0) vs AD (1) groups, confirming the statistical differences we observed in the t-tests and chi-square tests.
 
 ggplot(data, aes(x = Diagnosis, y = MMSE, fill = Diagnosis)) +
   geom_boxplot() +
@@ -290,128 +278,65 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
   scale_x_discrete(labels = c("No Alzheimer's", "Alzheimer's"))
 
 
-# EDA findings
-# -No missing values in any column -> no imputation ( substituting missing data with a different value) needed
-# -Slight diagnosis imbalance (65 % negative, 35 % positive) -> we will most likely adjust probability threshold to avoid bias or choose models which can work with this inequality
-# -Numeric attributes - mostly uniform -> we keep all rows and skip outlier deletion
-# -Categorical factors - most are highly imbalanced with the 0 level dominant
-# –Correlation heatmap shows strongest associations with Diagnosis for MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment, moderate for SleepQuality and HDL.
-# –Categorical predictors mostly skewed to 0 level. Several (MemoryComplaints, BehavioralProblems) still show enough positives to use in models.
-# Overall: the dataset is clean, and meets key modeling prerequisites. No further EDA-level fixes are required before moving to formal hypothesis creation/testing & model fitting.
+#' EDA findings
+#' -No missing values in any column -> no imputation ( substituting missing data with a different value) needed
+#' -Slight diagnosis imbalance (65 % negative, 35 % positive) -> we will most likely adjust probability threshold to avoid bias or choose models which can work with this inequality
+#' -Numeric attributes - mostly uniform -> we keep all rows and skip outlier deletion
+#' -Categorical factors - most are highly imbalanced with the 0 level dominant
+#' –Correlation heatmap shows strongest associations with Diagnosis for MMSE, ADL, MemoryComplaints,BehavioralProblems and FunctionalAssessment, moderate for SleepQuality and HDL.
+#' –Categorical predictors mostly skewed to 0 level. Several (MemoryComplaints, BehavioralProblems) still show enough positives to use in models.
+#' Overall: the dataset is clean, and meets key modeling prerequisites. No further EDA-level fixes are required before moving to formal hypothesis creation/testing & model fitting.
 
 
-################################################################################
-############################ Hypothesis formulation ############################
-################################################################################
-# H0: The classification performance (e.g. AUC) of the base model built on MMSE, FunctionalAssessment, ADL, MemoryComplaints and BehavioralProblems is yealds little no none performance increase when we add the composite LRI. There is no gain from including the lifestyle index.
+#'# Hypothesis formulation
+#' H0: The classification performance (e.g. AUC) of the base model built on MMSE, FunctionalAssessment, ADL, MemoryComplaints and BehavioralProblems is yealds little no none performance increase when we add the composite LRI. There is no gain from including the lifestyle index.
 
-# H1: Adding the composite LRI to that core five-variable model produces a significant increase in classification performance (e.g. AUC).
+#' H1: Adding the composite LRI to that core five-variable model produces a significant increase in classification performance (e.g. AUC).
 
 
 
-################################################################################
-################## 4. Requirements Analysis & Model Choice #####################
-################################################################################
-# R-1 picked candidate model families 
-# We need algorithms that can handle:
-# -binary outcome (Diagnosis 0 / 1),
-# -a mix of numeric and factor predictors,
-# -no missing data,
-# -~2 000 observations  vs  ≤ 30 predictors.
-#
-# Methods:
-# 1) Logistic GLM 
-#     –Parametric, interpretable odds ratios
-# 2) Linear Discriminant Analysis (LDA)
-#     -Assumes multivariate-normal (normal distribution to two or more variables) predictors in each class
-# 3) Decision Tree (rpart)
-#     -Handles mixed types, captures non-linear splits, transparent rules
-# 4) Random Forest
-#     -Ensemble of trees: should yield higher AUC, robust to noise, accepts
-#          both numeric and factor predictors out of the box
-#
-# These four (GLM, LDA, Tree, RF) will be evaluated against the dataset
+#'# Requirements Analysis & Model Choice
 
-# Dataset stats computed in EDA
-outcome_binary <- (length(unique(data$Diagnosis)) == 2)
-mixed_types <- any(sapply(data, is.factor)) & any(sapply(data, is.numeric))
-missing_pct <- 100 * sum(is.na(data)) / prod(dim(data))
-epv <- 108
-vif_max <- max(vif_vals)
-
-yes <- "Yes"
-no  <- "No"
-
-# Build the requirement table 
-req_tab <- data.frame(
-  Requirement    = c("Binary outcome", # model must handle 0 / 1
-                     "Mixed num+factor OK", # both numeric & factor predictors present
-                     "0 % missing OK", # we have 0 % NAs
-                     "Distributional assumption met", # linear log-odds, MV-normal
-                     sprintf("VIF ≤ 5  (max %.2f)", vif_max), # collinearity tolerance
-                     sprintf("EPV ≥ 10  (EPV %d)", epv)), # sample-size rule
-  
-  Logistic_GLM   = c(yes, # GLM natively supports binomial family
-                     yes, # factors become dummies automatically
-                     if (missing_pct==0) yes else no, # all rows complete -> OK
-                     "Linear log-odds", # GLM requires linearity in logit -> will be tested
-                     if (vif_max<5) yes else no, # good value VIF cut-off
-                     if (epv>=10)  yes else no), # EPV computed earlier (=108)
-  
-  LDA            = c(yes, # binary groups fine
-                     no, # needs all-numeric
-                     if (missing_pct==0) yes else no, # missing predictors
-                     "MV-normal", # assumes multivariate normality
-                     if (vif_max<10) yes else no, # LDA tolerates moderate VIF
-                     if (nrow(data)>200) yes else no), # heuristic sample rule
-  
-  Decision_Tree  = c(yes, yes, yes, "None", yes, yes), # trees have no linearity or VIF limits
-  
-  Random_Forest  = c(yes, yes, yes, "None", yes, yes), # shares tree properties
-  
-  row.names = NULL, check.names = FALSE
-)
-print(req_tab)
+#' R-1 picked candidate model families 
+#' We need algorithms that can handle:
+#' -binary outcome (Diagnosis 0 / 1),
+#' -a mix of numeric and factor predictors,
+#' -no missing data,
+#' -~2 000 observations  vs  ≤ 30 predictors.
 
 
-# Model-selection rationale
-# Data facts already known
-cat("\nKey stats → EPV =", epv,
-    "  | max VIF =", round(vif_max,2),
-    "  | missing % =", missing_pct, "\n")
+#' Comparison
+#' Logistic GLM:
+#'  -Provides odds ratios that test H1 directly. 
+#'  - Suitable choice given the binary outcome, 
+#'  - lack of strong multicollinearity
+#'  - Normality of predictors is not required.
+#'  - No outliers
+#'  - we have 2149 samples, it needs at least 500 samples
+#'  - All assumptions met.
 
-# Comparison
-# Logistic GLM:
-#  -Provides odds ratios that test H1 directly. 
-#  - Suitable choice given the binary outcome, 
-#  - lack of strong multicollinearity
-#  - Normality of predictors is not required.
-#  - No outliers
-#  - we have 2149 samples, it needs at least 500 samples
-#  - All assumptions met.
+#' Decision-Tree: 
+#'  -Handles mixed predictors, no distributional assumptions, produces transparent IF-THEN rules. 
 
-# Decision-Tree: 
-#  -Handles mixed predictors, no distributional assumptions, produces transparent IF-THEN rules. 
+#' Random-Forest:
+#'  -Likely higher raw accuracy than a single tree, but interpretability falls.
+#'  -We keep it only for feature-importance exploration, not as a deployable model.
 
-# Random-Forest:
-#  -Likely higher raw accuracy than a single tree, but interpretability falls.
-#  -We keep it only for feature-importance exploration, not as a deployable model.
+#' LDA: 
+#'  -Dropped - requires all-numeric and multivariate normality, both were violated here. 
+#'  - also requires normality
+#' -Would add no value beyond GLM.
 
-# LDA: 
-#  -Dropped - requires all-numeric and multivariate normality, both were violated here. 
-#  - also requires normality
-# -Would add no value beyond GLM.
+#' SVM
+#' - While SVM could potentially work, Logistic Regression is often more 
+#' interpretable for binary outcomes and directly models the probability. 
+#' The lack of strong evidence for complex non-linear relationships in the 
+#' predictors themselves didn't necessitate the complexity of SVM with kernels.
 
-# SVM
-# - While SVM could potentially work, Logistic Regression is often more 
-# interpretable for binary outcomes and directly models the probability. 
-# The lack of strong evidence for complex non-linear relationships in the 
-# predictors themselves didn't necessitate the complexity of SVM with kernels.
-
-# Planned modeling path
-# primary_model <- Logistic GLM: for inference / H1 test
-# secondary_model <- Decision Tree: benchmark with explanations
-# exploratory_model <- Random Forest: optional accuracy check
+#' Planned modeling path
+#' primary_model <- Logistic GLM: for inference / H1 test
+#' secondary_model <- Decision Tree: benchmark with explanations
+#' exploratory_model <- Random Forest: optional accuracy check
 
 
 
@@ -419,76 +344,72 @@ cat("\nKey stats → EPV =", epv,
 
 
 
-################################################################################
-############################# 5. Data Spending #################################
-################################################################################
-# We pick one technique that: 
-#  -Gives reliable performance estimates for our dataset  
-#  -Keeps the 65 / 35 class ratio in every split  
-#  -Is light-weight to run GLM, Tree and RF models repeatedly
-#
-# Chosen method:  
-#  -STRATIFIED 10-fold cross-validation
-#  –Ten folds - roughly 1 900 rows for training and roughly 215 for testing each round.  
-#  –With 760 positive cases total, every fold still has roughly 75 AD patients
-#   --metrics such as Sensitivity should be stable.  
-#  –Computational cost is slight (10 fits per model) yet variance is much lower than a single 70 / 30 split ((estimate won't be overly optimistic or pessimistic)).
+#'# 5. Data Spending
+#' We pick one technique that: 
+#'  -Gives reliable performance estimates for our dataset  
+#'  -Keeps the 65 / 35 class ratio in every split  
+#'  -Is light-weight to run GLM, Tree and RF models repeatedly
+#'
+#' Chosen method:  
+#'  -STRATIFIED 10-fold cross-validation
+#'  –Ten folds - roughly 1 900 rows for training and roughly 215 for testing each round.  
+#'  –With 760 positive cases total, every fold still has roughly 75 AD patients
+#'   --metrics such as Sensitivity should be stable.  
+#'  –Computational cost is slight (10 fits per model) yet variance is much lower than a single 70 / 30 split ((estimate won't be overly optimistic or pessimistic)).
 
 
 
-set.seed(65778275) # reproducible folds
+set.seed(65778275) #' reproducible folds
 cv_splits <- vfold_cv(
   data, 
-  v      = 10, # 10-fold
-  strata = Diagnosis  # keeps class balance in each fold
+  v      = 10, #' 10-fold
+  strata = Diagnosis  #' keeps class balance in each fold
 )
 
 print(cv_splits)
-# rsample object with 10 splits and class-stratification information
+#' rsample object with 10 splits and class-stratification information
 
 
 
 
-# More Reliable -  Gives a better estimate of how well your model will work on new, unseen data compared to a single train-test split.
-# Efficient Data Use - Uses 2149 samples more effectively for both training and evaluation.
-# Checks Stability - Shows if your model's performance is consistent across different parts of your data.
-# Less Biased - Reduces the risk of your evaluation being misleading due to a lucky or unlucky data split.
-# Standard Practice - It's the common and recommended way to evaluate classification models like logistic regression.
+#' More Reliable -  Gives a better estimate of how well your model will work on new, unseen data compared to a single train-test split.
+#' Efficient Data Use - Uses 2149 samples more effectively for both training and evaluation.
+#' Checks Stability - Shows if your model's performance is consistent across different parts of your data.
+#' Less Biased - Reduces the risk of your evaluation being misleading due to a lucky or unlucky data split.
+#' Standard Practice - It's the common and recommended way to evaluate classification models like logistic regression.
 
 
 
 
-################################################################################
-################# Data preparation & Lifestyle-Risk-Index (LRI) ################
-################################################################################
-# Goal is to keep only variables needed for the hypothesis + create a trimmed data frame for modelling
+#'# Data preparation & Lifestyle-Risk-Index (LRI)
+#' Goal is to keep only variables needed for the hypothesis + create a trimmed data frame for modelling
 
-# Keep only variables required by the hypothesis
+#' Keep only variables required by the hypothesis
 core_vars <- c(predictors, 
-  # non-modifiable risk factors
+  #' non-modifiable risk factors
   "FamilyHistoryAlzheimers", "HeadInjury",
-  # lifestyle components
+  #' lifestyle components
   "PhysicalActivity", "DietQuality",
   "Smoking", "AlcoholConsumption", "BMI"
 )
 
 data_hyp <- data_numeric %>% dplyr::select(all_of(core_vars))
 
-# Change each lifestyle component into a binary risk flag
-# (1 = risky level, 0 = healthy/reference level)
+#' Change each lifestyle component into a binary risk flag
+#' (1 = risky level, 0 = healthy/reference level)
 data_hyp <- data_hyp %>% mutate(
-  pa_risk      = ifelse(PhysicalActivity   <  3, 1, 0),  # < 3 h moderate PA / wk
-  diet_risk    = ifelse(DietQuality        <= 4, 1, 0),  # low diet-quality score
-  sleep_risk   = ifelse(SleepQuality       <= 5, 1, 0),  # poor sleep quality
-  smoke_risk   = ifelse(Smoking            == 1, 1, 0),  # current smoker
-  alcohol_risk = ifelse(AlcoholConsumption  > 14,1, 0),  # > 14 units / wk
-  bmi_risk     = ifelse(BMI                >= 30,1, 0)   # obese
+  pa_risk      = ifelse(PhysicalActivity   <  3, 1, 0),  #' < 3 h moderate PA / wk
+  diet_risk    = ifelse(DietQuality        <= 4, 1, 0),  #' low diet-quality score
+  sleep_risk   = ifelse(SleepQuality       <= 5, 1, 0),  #' poor sleep quality
+  smoke_risk   = ifelse(Smoking            == 1, 1, 0),  #' current smoker
+  alcohol_risk = ifelse(AlcoholConsumption  > 14,1, 0),  #' > 14 units / wk
+  bmi_risk     = ifelse(BMI                >= 30,1, 0)   #' obese
 )
-# Sum the six flags to obtain the Lifestyle-Risk-Index (LRI)
+#' Sum the six flags to obtain the Lifestyle-Risk-Index (LRI)
 data_hyp <- data_hyp %>% mutate(
   LRI = pa_risk + diet_risk + sleep_risk + smoke_risk + alcohol_risk + bmi_risk
 )
-#str(data_hyp)
+#'str(data_hyp)
 
 data_numeric <- data_numeric %>% mutate(
   LRI = data_hyp$LRI
@@ -496,43 +417,41 @@ data_numeric <- data_numeric %>% mutate(
 data <- data %>% mutate(
   LRI = data_hyp$LRI
 )
-#str(data)
+#'str(data)
 
 
-# Final fix of factor levels & drop rows with any missing values
-#data_hyp <- data_hyp %>% 
-#  mutate(
-#    Diagnosis = factor(Diagnosis, levels = c(0, 1)),  # ensure 0 = No, 1 = Yes
-#    Gender    = factor(Gender)                        # guarantee factor type
-#  ) %>% 
-#  drop_na()
-
-
-
+#' Final fix of factor levels & drop rows with any missing values
+#'data_hyp <- data_hyp %>% 
+#'  mutate(
+#'    Diagnosis = factor(Diagnosis, levels = c(0, 1)),  #' ensure 0 = No, 1 = Yes
+#'    Gender    = factor(Gender)                        #' guarantee factor type
+#'  ) %>% 
+#'  drop_na()
 
 
 
 
 
 
-################################################################################
-################################ Hypothesis test ###############################
-################################################################################
-# H1: Higher LRI = higher odds of Alzheimer.
 
 
-# Split dataset into training and testing sets
+
+#'# Hypothesis test
+#' H1: Higher LRI = higher odds of Alzheimer.
+
+
+#' Split dataset into training and testing sets
 set.seed(235455)
 train_index <- createDataPartition(data_numeric$Diagnosis, p = 0.7, list = FALSE)
 train_data <- data_numeric[train_index, ]
 test_data  <- data_numeric[-train_index, ]
 
 set.seed(51635455)
-# Define the training control for 10-fold cross-validation
-train_control <- trainControl(method = "cv", # Use cross-validation
-                              number = 10)  # Specify the number of folds (k=10)
+#' Define the training control for 10-fold cross-validation
+train_control <- trainControl(method = "cv", #' Use cross-validation
+                              number = 10)  #' Specify the number of folds (k=10)
 
-# Then, run the train() function again:
+#' Then, run the train() function again:
 model_cv <- train(
   as.factor(Diagnosis) ~ .,
   data = train_data[, c("Diagnosis", predictors)],
@@ -541,22 +460,22 @@ model_cv <- train(
   trControl = train_control
 )
 
-# Print the cross-validation results
+#' Print the cross-validation results
 print(model_cv)
 
-# from crossvalidation we can see Accuracy of 0.8492097 and Kappa of 0.6571427
-# Kappa is a metric that measures how much better your classifier is compared to random guessing
+#' from crossvalidation we can see Accuracy of 0.8492097 and Kappa of 0.6571427
+#' Kappa is a metric that measures how much better your classifier is compared to random guessing
 
 library(pmsampsize)
 pmsampsize(
-  type = "b",              # binary outcome
-  cstatistic = 0.85,       # use AUC estimate if known, or guess ~0.85
-  parameters = 9,          # number of predictor parameters
-  prevalence = 0.35,        # proportion of positive outcome (e.g. Diagnosis = 1)
-  shrinkage = 0.9          # to limit overfitting (default)
+  type = "b",              #' binary outcome
+  cstatistic = 0.85,       #' use AUC estimate if known, or guess ~0.85
+  parameters = 9,          #' number of predictor parameters
+  prevalence = 0.35,        #' proportion of positive outcome (e.g. Diagnosis = 1)
+  shrinkage = 0.9          #' to limit overfitting (default)
 )
-# the test shows us that:
-# Minimum sample size required for new model development based on user inputs = 350
+#' the test shows us that:
+#' Minimum sample size required for new model development based on user inputs = 350
 
 model_primary <- glm(
   Diagnosis ~ .,
@@ -572,36 +491,36 @@ model_secondary <- glm(
   data = train_data[, c("Diagnosis", second_predictors[!second_predictors %in% c("CholesterolHDL", "SleepQuality")])],
   family = binomial
 )
-# SleepQuality is also in LRI predictor
+#' SleepQuality is also in LRI predictor
 
 summary(model_secondary)
 
 
-# Compare models
+#' Compare models
 AIC(model_primary, model_secondary)
-# AIC index shows that priamry/first model is slightly better, so we continue with primary model.
+#' AIC index shows that priamry/first model is slightly better, so we continue with primary model.
 
-# Multicolinearity
+#' Multicolinearity
 vif(model_primary)
-# VIF values are < 5 therefore no multicolinearity is detected.
+#' VIF values are < 5 therefore no multicolinearity is detected.
 
-# Convert log-odds to odds-ratios
-exp(cbind(OddsRatios = coef(model_primary),   # exponentiate → odds ratios
-          confint(model_primary)))    # CIs for interpretation
+#' Convert log-odds to odds-ratios
+exp(cbind(OddsRatios = coef(model_primary),   #' exponentiate → odds ratios
+          confint(model_primary)))    #' CIs for interpretation
 
-# For a one-unit increase in FunctionalAssessment, the odds of the positive 
-# outcome are multiplied by approximately 0.64. This indicates that higher 
-# values of FunctionalAssessment are associated with lower odds of the 
-# positive outcome (since 0.64 < 1).
+#' For a one-unit increase in FunctionalAssessment, the odds of the positive 
+#' outcome are multiplied by approximately 0.64. This indicates that higher 
+#' values of FunctionalAssessment are associated with lower odds of the 
+#' positive outcome (since 0.64 < 1).
 
 library(leaps)
 combination_models <- regsubsets(Diagnosis ~ .,
                      data = train_data[, c("Diagnosis", second_predictors)])
 summary(combination_models)
-# This resulting tables shows best combination of predictors for N number of
-# predictors e.g. if we want just 1 - we pick FunctionalAssessment, for 2 predictors
-# we pick FunctionalAssessment and MemoryComplaints, and for 3 we pick
-# FunctionalAssessment, MemoryComplaints and ADL, ...
+#' This resulting tables shows best combination of predictors for N number of
+#' predictors e.g. if we want just 1 - we pick FunctionalAssessment, for 2 predictors
+#' we pick FunctionalAssessment and MemoryComplaints, and for 3 we pick
+#' FunctionalAssessment, MemoryComplaints and ADL, ...
 
 
 
@@ -610,48 +529,48 @@ summary(combination_models)
 
 
 
-# Checking for the 3 Conditions
+#' Checking for the 3 Conditions
 
-# 1. Randomness (Visual Check from QQ-Plot):
-#    - If the points generally follow the red line, it suggests the residuals are
-#      not systematically deviating from the expected distribution under the model.
-#    - Large deviations, especially curves or S-shapes, might indicate a lack of randomness
-#      or model misspecification.
+#' 1. Randomness (Visual Check from QQ-Plot):
+#'    - If the points generally follow the red line, it suggests the residuals are
+#'      not systematically deviating from the expected distribution under the model.
+#'    - Large deviations, especially curves or S-shapes, might indicate a lack of randomness
+#'      or model misspecification.
 
-# 2. Outliers (Visual Check from QQ-Plot):
-#    - Points that are far away from the red line, particularly at the extreme ends (tails)
-#      of the plot, can be potential outliers. These are observations that are much more
-#      or less extreme than expected by the model.
+#' 2. Outliers (Visual Check from QQ-Plot):
+#'    - Points that are far away from the red line, particularly at the extreme ends (tails)
+#'      of the plot, can be potential outliers. These are observations that are much more
+#'      or less extreme than expected by the model.
 
-# 3. Heteroscedasticity (Less Directly Assessed by QQ-Plot):
-#    - A QQ-plot primarily assesses the distribution of the residuals, not directly their
-#      variance across predicted values.
-#    - However, severe deviations from the line might indirectly hint at issues with the
-#      variance if the model assumptions are violated.
-#    - To more directly assess heteroscedasticity, the "Residuals vs. Predicted Values" plot
-#      (as shown in the previous response) is more informative. Look for a funnel shape
-#      or increasing/decreasing spread of residuals as predicted probabilities change.
+#' 3. Heteroscedasticity (Less Directly Assessed by QQ-Plot):
+#'    - A QQ-plot primarily assesses the distribution of the residuals, not directly their
+#'      variance across predicted values.
+#'    - However, severe deviations from the line might indirectly hint at issues with the
+#'      variance if the model assumptions are violated.
+#'    - To more directly assess heteroscedasticity, the "Residuals vs. Predicted Values" plot
+#'      (as shown in the previous response) is more informative. Look for a funnel shape
+#'      or increasing/decreasing spread of residuals as predicted probabilities change.
 
 residuals_primary <- residuals(model_primary, type = "deviance")
-#plot(model_primary)
+#'plot(model_primary)
 
 
-# --- QQ-Plot for Residuals ---
-#qqnorm(residuals_primary, main = "QQ-Plot of Deviance Residuals (Primary Model)")
-#qqline(residuals_primary, col = "red")
+#' --- QQ-Plot for Residuals ---
+#'qqnorm(residuals_primary, main = "QQ-Plot of Deviance Residuals (Primary Model)")
+#'qqline(residuals_primary, col = "red")
 
 car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Linear Regression")
 
-# Interpretation of QQ-Plot:
-# This plot helps assess if the distribution of your residuals follows a theoretical normal distribution.
-# - If the points fall roughly along the red line, the residuals are approximately normally distributed.
-# - Deviations from the line, especially S-shapes or curves, suggest non-normality.
-# - Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
-# Note: For logistic regression, perfect normality of residuals is not expected due to the binary outcome. Focus on severe deviations.
+#' Interpretation of QQ-Plot:
+#' This plot helps assess if the distribution of your residuals follows a theoretical normal distribution.
+#' - If the points fall roughly along the red line, the residuals are approximately normally distributed.
+#' - Deviations from the line, especially S-shapes or curves, suggest non-normality.
+#' - Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
+#' Note: For logistic regression, perfect normality of residuals is not expected due to the binary outcome. Focus on severe deviations.
 
-# --- Statistical Tests on Residuals ---
+#' --- Statistical Tests on Residuals ---
 
-# Perform tests
+#' Perform tests
 shapiro_test_result <- shapiro.test(residuals_primary)
 ttest_result <- t.test(residuals_primary)
 bp_test_result <- bptest(model_primary)
@@ -659,7 +578,7 @@ tpt_result <- turning.point.test(residuals_primary)
 dw_test_result <- dwtest(model_primary)
 
 
-# --- Table of Test Results ---
+#' --- Table of Test Results ---
 
 test_results_table <- data.frame(
   Test = c("Shapiro-Wilk Normality Test",
@@ -677,10 +596,10 @@ test_results_table <- data.frame(
               format.pval(bp_test_result$p.value, digits = 3),
               format.pval(tpt_result$p.value, digits = 3),
               format.pval(dw_test_result$p.value, digits = 3)),
-  Interpretation = character(5) # Placeholder for GOOD/BAD
+  Interpretation = character(5) #' Placeholder for GOOD/BAD
 )
 
-# Fill the Interpretation column with GOOD/BAD
+#' Fill the Interpretation column with GOOD/BAD
 test_results_table$Interpretation[1] <- ifelse(shapiro_test_result$p.value > 0.05, "GOOD", "BAD")
 test_results_table$Interpretation[2] <- ifelse(ttest_result$p.value > 0.05, "GOOD", "BAD")
 test_results_table$Interpretation[3] <- ifelse(bp_test_result$p.value > 0.05, "GOOD", "BAD")
@@ -720,33 +639,33 @@ print(outcome_interpretation)
 
 
 
-# Predict probabilities on test set
+#' Predict probabilities on test set
 test_probs <- predict(model_primary, newdata = test_data, type = "response")
 
-# ROC analysis
+#' ROC analysis
 roc_obj_primary <- roc(test_data$Diagnosis, test_probs)
 auc_primary <- auc(roc_obj_primary)
 cat("AUC:", round(auc_primary, 3), "\n")
 
-# Step 6: Get optimal threshold (Youden's J)
+#' Step 6: Get optimal threshold (Youden's J)
 coords_obj_primary <- coords(roc_obj_primary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
 optimal_threshold_primary <- coords_obj_primary["threshold"]
 optimal_threshold_primary
 
-# Step 7: Confusion matrix - threshold 0.5
+#' Step 7: Confusion matrix - threshold 0.5
 preds_default <- factor(ifelse(test_probs > 0.5, 1, 0), levels = c(0, 1))
 conf_matrix_default <- confusionMatrix(preds_default, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Threshold 0.5):\n")
 print(conf_matrix_default)
 
 optimal_threshold_primary
-# Confusion matrix - optimal threshold
+#' Confusion matrix - optimal threshold
 preds_optimal <- factor(ifelse(test_probs > 0.3338061, 1, 0), levels = c(0, 1))
 conf_matrix_optimal <- confusionMatrix(preds_optimal, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Optimal Threshold):\n")
 print(conf_matrix_optimal)
 
-# --- Visualize Confusion Matrices
+#' --- Visualize Confusion Matrices
 create_cm_df <- function(cm, model_name) {
   as.data.frame(cm$table) %>%
     mutate(Model = model_name)
@@ -769,23 +688,23 @@ ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
 
 
 
-# Predict probabilities on test set for secondary model
+#' Predict probabilities on test set for secondary model
 test_probs_secondary <- predict(model_secondary, newdata = test_data, type = "response")
 
-# ROC analysis for secondary model
+#' ROC analysis for secondary model
 roc_obj_secondary <- roc(test_data$Diagnosis, test_probs_secondary)
 auc_secondary <- auc(roc_obj_secondary)
 cat("AUC (Secondary Model):", round(auc_primary, 3), "\n")
 cat("AUC (Secondary Model):", round(auc_secondary, 3), "\n")
 
-# Here secondary model has slightly bigger auc.
+#' Here secondary model has slightly bigger auc.
 
-# Optimal threshold (Youden's J) for secondary model
+#' Optimal threshold (Youden's J) for secondary model
 coords_obj_secondary <- coords(roc_obj_secondary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
 optimal_threshold_secondary <- coords_obj_secondary["threshold"]
 optimal_threshold_secondary
 
-# --- Visualize ROC Curves ---
+#' --- Visualize ROC Curves ---
 roc_df_primary <- data.frame(
   fpr = 1 - roc_obj_primary$specificities,
   tpr = roc_obj_primary$sensitivities,
@@ -806,11 +725,11 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
   geom_line(linewidth = 1) +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey") +
   
-  # Add vertical and horizontal lines for primary threshold
+  #' Add vertical and horizontal lines for primary threshold
   geom_vline(xintercept = 1 - coords_obj_primary$specificity, color = "blue", linetype = "dotted") +
   geom_hline(yintercept = coords_obj_primary$sensitivity, color = "blue", linetype = "dotted") +
   
-  # Add vertical and horizontal lines for secondary threshold
+  #' Add vertical and horizontal lines for secondary threshold
   geom_vline(xintercept = 1 - coords_obj_secondary$specificity, color = "red", linetype = "dotted") +
   geom_hline(yintercept = coords_obj_secondary$sensitivity, color = "red", linetype = "dotted") +
   
@@ -841,8 +760,8 @@ no_information_rate <- majority_class_count / total_samples
 cat("Majority Class:", majority_class, "\n")
 cat("No Information Rate:", no_information_rate, "\n")
 
-# Logistic regression model's accuracy is higher than the No Information Rate.
-# Therefore our model is learning useful information from the predictors.
+#' Logistic regression model's accuracy is higher than the No Information Rate.
+#' Therefore our model is learning useful information from the predictors.
 
 
 
@@ -899,65 +818,124 @@ cat("Categorical Predictors: Predicted probability for each level (vs. baseline,
 
 
 
+#'# Second Model - XBoost (GBM)
 
 
 
+#' articles:
 
-# articles:
+#' https://ieeexplore.ieee.org/abstract/document/9521165
+#' https://ieeexplore.ieee.org/abstract/document/10359516
+#' https://ieeexplore.ieee.org/abstract/document/10353401
 
-# https://ieeexplore.ieee.org/abstract/document/9521165
-# https://ieeexplore.ieee.org/abstract/document/10359516
-# https://ieeexplore.ieee.org/abstract/document/10353401
+#' https://ieeexplore.ieee.org/abstract/document/9201455
+#' https://www.sciencedirect.com/science/article/pii/S1319157820304936
+#' https://www.sciencedirect.com/science/article/pii/S0169809522002241
 
-# https://ieeexplore.ieee.org/abstract/document/9201455
-# https://www.sciencedirect.com/science/article/pii/S1319157820304936
-# https://www.sciencedirect.com/science/article/pii/S0169809522002241
-
-# https://link.springer.com/article/10.1186/s12911-023-02238-9
-
+#' https://link.springer.com/article/10.1186/s12911-023-02238-9
 
 
-
-# https://ieeexplore.ieee.org/abstract/document/9201455 **************
-# https://www.sciencedirect.com/science/article/pii/S1319157820304936 ************
+#' https://ieeexplore.ieee.org/abstract/document/9201455 **************
+#' https://www.sciencedirect.com/science/article/pii/S1319157820304936 ************
 
 
 
 
 gbm_model <- gbm(
-  Diagnosis ~ ., # Formula: Predict 'Diagnosis' using all other columns in the specified data
-  data = train_data[, c("Diagnosis", predictors)], # Data frame and the columns to be used for training (Diagnosis and the selected predictors)
-  distribution = "bernoulli", # - logistic # Specifies the loss function to be used. "bernoulli" is appropriate for binary classification (0 or 1 outcomes like Diagnosis)
-  n.trees = 100, # The number of boosting iterations to perform. Each tree is built sequentially, trying to correct the errors of the previous trees. More trees can lead to better performance but also increased risk of overfitting and longer training time.
-  shrinkage = 0.1, # Also known as the learning rate. It scales the contribution of each tree. A smaller shrinkage value (e.g., 0.01, 0.1) makes the learning slower but often results in more robust models that generalize better.
-  interaction.depth = 6, # The maximum depth of each tree. It controls the complexity of the interactions between predictors that the model can capture. A depth of 1 means the model is additive (no interactions), a depth of 2 allows for two-way interactions, and so on. Higher values can capture more complex relationships but also increase the risk of overfitting.
-  n.minobsinnode = 10, # The minimum number of observations in the terminal nodes (leaves) of each tree. This parameter helps to regularize the model and prevent overfitting by ensuring that leaves are not too specific to small subsets of the training data.
-  verbose = FALSE # A logical value indicating whether to print progress and performance updates during the training process. FALSE means no output during training.
+  Diagnosis ~ ., #' Formula: Predict 'Diagnosis' using all other columns in the specified data
+  data = train_data[, c("Diagnosis", predictors)], #' Data frame and the columns to be used for training (Diagnosis and the selected predictors)
+  distribution = "bernoulli", #' - logistic #' Specifies the loss function to be used. "bernoulli" is appropriate for binary classification (0 or 1 outcomes like Diagnosis)
+  n.trees = 100, #' The number of boosting iterations to perform. Each tree is built sequentially, trying to correct the errors of the previous trees. More trees can lead to better performance but also increased risk of overfitting and longer training time.
+  shrinkage = 0.1, #' Also known as the learning rate. It scales the contribution of each tree. A smaller shrinkage value (e.g., 0.01, 0.1) makes the learning slower but often results in more robust models that generalize better.
+  interaction.depth = 6, #' The maximum depth of each tree. It controls the complexity of the interactions between predictors that the model can capture. A depth of 1 means the model is additive (no interactions), a depth of 2 allows for two-way interactions, and so on. Higher values can capture more complex relationships but also increase the risk of overfitting.
+  n.minobsinnode = 10, #' The minimum number of observations in the terminal nodes (leaves) of each tree. This parameter helps to regularize the model and prevent overfitting by ensuring that leaves are not too specific to small subsets of the training data.
+  verbose = FALSE #' A logical value indicating whether to print progress and performance updates during the training process. FALSE means no output during training.
 )
 
-# Check summary (variable importance)
+#' Check summary (variable importance)
 summary(gbm_model)
 
-# Predict probabilities
+
+
+
+
+
+
+
+
+#' Your GBM model parameters
+gbm_params <- list(
+  distribution = "bernoulli",
+  n.trees = 100,
+  shrinkage = 0.1,
+  interaction.depth = 6,
+  n.minobsinnode = 10,
+  verbose = FALSE
+)
+
+#' Your data
+data_for_gbm <- train_data[, c("Diagnosis", predictors)]
+
+#' Explicitly convert Diagnosis to a factor with specific levels and labels
+data_for_gbm$Diagnosis <- factor(data_for_gbm$Diagnosis,
+                                 levels = c(0, 1), #' Ensure levels are 0 and 1 (numeric)
+                                 labels = c("NoAD", "AD")) #' Label them for clarity
+
+#' Define the train control for cross-validation
+train_control <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+
+#' Train the GBM model using caret's train function
+gbm_model_cv <- train(
+  Diagnosis ~ .,
+  data = data_for_gbm,
+  method = "gbm",
+  trControl = train_control,
+  metric = "ROC",
+  tuneGrid = expand.grid(
+    n.trees = gbm_params$n.trees,
+    shrinkage = gbm_params$shrinkage,
+    interaction.depth = gbm_params$interaction.depth,
+    n.minobsinnode = gbm_params$n.minobsinnode
+  ),
+  verbose = gbm_params$verbose
+)
+
+print(gbm_model_cv)
+
+print(paste("Average CV ROC:", gbm_model_cv$results$ROC))
+
+#' average ROC for GBM cross-validation appears to be Average 0.948,
+#' so it performs very well.
+
+
+
+
+
+#' Predict probabilities
 pred_probs <- predict(gbm_model, newdata = test_data, n.trees = 100, type = "response")
 
-# Convert probabilities to class labels (0 or 1) using 0.5 threshold
+#' Convert probabilities to class labels (0 or 1) using 0.5 threshold
 pred_labels <- ifelse(pred_probs > 0.5, 1, 0)
 
-# Actual labels
+#' Actual labels
 true_labels <- test_data$Diagnosis
 
-# Confusion matrix
+#' Confusion matrix
 conf_mat <- confusionMatrix(as.factor(pred_labels), as.factor(true_labels), positive = "1")
 print(conf_mat)
 
 cm_df <- as.data.frame(conf_mat$table)
 
-# Rename columns for clarity
+#' Rename columns for clarity
 cm_df <- cm_df %>%
   rename(Predicted = Prediction, Actual = Reference, Count = Freq)
 
-# Create the plot
+#' Create the plot
 ggplot(cm_df, aes(x = Actual, y = Predicted, fill = Count)) +
   geom_tile() +
   geom_text(aes(label = Count), color = "white", size = 5) +
@@ -967,12 +945,12 @@ ggplot(cm_df, aes(x = Actual, y = Predicted, fill = Count)) +
   theme(aspect.ratio = 1)
 
 
-# AUC
+#' AUC
 roc_obj_gboost <- roc(true_labels, pred_probs)
 auc_gboost <- auc(roc_obj_gboost)
 cat("AUC:", auc_gboost, "\n")
 
-# Accuracy reached 95,76%
+#' Accuracy reached 95,76%
 
 
 coords_obj_gboost <- coords(roc_obj_gboost, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
@@ -1003,7 +981,7 @@ ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
 
 
 
-# --- Visualize ROC Curves ---
+#' --- Visualize ROC Curves ---
 roc_df_primary <- data.frame(
   fpr = 1 - roc_obj_primary$specificities,
   tpr = roc_obj_primary$sensitivities,
@@ -1034,38 +1012,38 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
   annotate("text", x = 0.75, y = 0.20, label = paste("AUC (GBoost) =", round(auc_gboost, 3)), color = "red")
 
 
-# Gradient Boosting Machine (GBM) Model Results:
+#' Gradient Boosting Machine (GBM) Model Results:
 
-# Variable Importance:
-#    The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
-#    - FunctionalAssessment is the most important variable, with a relative influence of approximately 23.9%.
-#    - MMSE and ADL are also highly influential, with relative influences of around 21.7% and 20.7%, respectively.
-#    - MemoryComplaints and BehavioralProblems have moderate influence (around 15.7% and 13.3%).
-#    - SleepQuality and CholesterolHDL appear to have the least influence on the model's predictions (2.7% and 1.9%).
+#' Variable Importance:
+#'    The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
+#'    - FunctionalAssessment is the most important variable, with a relative influence of approximately 23.9%.
+#'    - MMSE and ADL are also highly influential, with relative influences of around 21.7% and 20.7%, respectively.
+#'    - MemoryComplaints and BehavioralProblems have moderate influence (around 15.7% and 13.3%).
+#'    - SleepQuality and CholesterolHDL appear to have the least influence on the model's predictions (2.7% and 1.9%).
 
-# Confusion Matrix and Statistics:
-#    The confusion matrix on the test set (assuming this matrix was generated from the GBM model's predictions) shows the following:
-#    - True Negatives (TN): 386 (Number of actual 0s correctly predicted as 0)
-#    - False Negatives (FN): 25 (Number of actual 1s incorrectly predicted as 0)
-#    - False Positives (FP): 13 (Number of actual 0s incorrectly predicted as 1)
-#    - True Positives (TP): 220 (Number of actual 1s correctly predicted as 1)
+#' Confusion Matrix and Statistics:
+#'    The confusion matrix on the test set (assuming this matrix was generated from the GBM model's predictions) shows the following:
+#'    - True Negatives (TN): 386 (Number of actual 0s correctly predicted as 0)
+#'    - False Negatives (FN): 25 (Number of actual 1s incorrectly predicted as 0)
+#'    - False Positives (FP): 13 (Number of actual 0s incorrectly predicted as 1)
+#'    - True Positives (TP): 220 (Number of actual 1s correctly predicted as 1)
 
-#    Performance Metrics:
-#    - Accuracy: 0.941 (94.1% of predictions were correct)
-#    - 95% Confidence Interval (CI) for Accuracy: (0.9199, 0.9579)
-#    - No Information Rate (NIR): 0.6196 (Accuracy if the model always predicted the majority class)
-#    - P-Value [Acc > NIR]: < 2e-16 (Highly significant, indicating the model's accuracy is significantly better than random guessing)
-#    - Kappa: 0.8736 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
-#    - Mcnemar's Test P-Value: 0.07435 (P-value for McNemar's chi-squared test, testing for symmetry of errors. A value > 0.05 suggests no significant difference in the types of errors)
-#    - Sensitivity (Recall, True Positive Rate): 0.8980 (Proportion of actual 1s correctly identified)
-#    - Specificity (True Negative Rate): 0.9674 (Proportion of actual 0s correctly identified)
-#    - Positive Predictive Value (Precision): 0.9442 (Proportion of predicted 1s that were actually 1s)
-#    - Negative Predictive Value: 0.9392 (Proportion of predicted 0s that were actually 0s)
-#    - Prevalence: 0.3804 (Proportion of the positive class (1) in the test set)
-#    - Detection Rate: 0.3416 (Proportion of the positive class correctly identified out of the total number of instances)
-#    - Detection Prevalence: 0.3618 (Proportion of instances predicted as positive)
-#    - Balanced Accuracy: 0.9327 (Average of sensitivity and specificity)
-#    - 'Positive' Class: 1 (Indicates that class '1' was treated as the positive class for sensitivity and specificity calculations)
+#' Performance Metrics:
+#'    - Accuracy: 0.941 (94.1% of predictions were correct)
+#'    - 95% Confidence Interval (CI) for Accuracy: (0.9199, 0.9579)
+#'    - No Information Rate (NIR): 0.6196 (Accuracy if the model always predicted the majority class)
+#'    - P-Value [Acc > NIR]: < 2e-16 (Highly significant, indicating the model's accuracy is significantly better than random guessing)
+#'    - Kappa: 0.8736 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
+#'    - Mcnemar's Test P-Value: 0.07435 (P-value for McNemar's chi-squared test, testing for symmetry of errors. A value > 0.05 suggests no significant difference in the types of errors)
+#'    - Sensitivity (Recall, True Positive Rate): 0.8980 (Proportion of actual 1s correctly identified)
+#'    - Specificity (True Negative Rate): 0.9674 (Proportion of actual 0s correctly identified)
+#'    - Positive Predictive Value (Precision): 0.9442 (Proportion of predicted 1s that were actually 1s)
+#'    - Negative Predictive Value: 0.9392 (Proportion of predicted 0s that were actually 0s)
+#'    - Prevalence: 0.3804 (Proportion of the positive class (1) in the test set)
+#'    - Detection Rate: 0.3416 (Proportion of the positive class correctly identified out of the total number of instances)
+#'    - Detection Prevalence: 0.3618 (Proportion of instances predicted as positive)
+#'    - Balanced Accuracy: 0.9327 (Average of sensitivity and specificity)
+#'    - 'Positive' Class: 1 (Indicates that class '1' was treated as the positive class for sensitivity and specificity calculations)
 
-# Area Under the ROC Curve (AUC):
-#    - AUC: 0.9534141 (This indicates excellent discriminatory power of the GBM model. An AUC of 0.95 suggests a high ability to distinguish between the positive and negative classes.)
+#' Area Under the ROC Curve (AUC):
+#'    - AUC: 0.9534141 (This indicates excellent discriminatory power of the GBM model. An AUC of 0.95 suggests a high ability to distinguish between the positive and negative classes.)
