@@ -341,6 +341,27 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 # -Over all folds, every sample is used exactly once for testing and nine times for training.
 # -Averaging metrics (e.g. AUC, accuracy) across folds gives a robust estimate of expected performance and its variability.
 
+#’ Alternative resampling schemes (besides Stratified 10-fold CV):
+#’ -Stratified repeated k-fold CV (e.g. 5×10-fold):  
+#’ --Like 10-fold CV, but runs it multiple times with new fold splits  
+#’ --Further reduces variance of your performance estimates  
+#’ -Stratified Monte Carlo CV (repeated random splits):  
+#’ --Randomly split into, say, 70/30 train/test many times  
+#’ --Flexible train/test ratio, but may leave out some samples consistently  
+#’ -Stratified bootstrap:  
+#’ --Draw many bootstrap samples, train on each, test on out-of-bag cases  
+#’ --Gives confidence intervals, but can be optimistically biased  
+#’ -Leave-One-Out CV (LOOCV):  
+#’ --Train on all but one sample each round (2,148/1)  
+#’ --Maximizes training data but yields high variance and long runtimes  
+
+#’ Why 10-fold CV?  
+#’ -Balanced bias/variance: more stable than a single split, lighter than LOOCV  
+#’ -Preserves 65/35 class ratio in every fold  
+#’ -Uses all 2,149 cases efficiently for both training and testing  
+#’ -Computationally cheap (10 model fits) yet standard for binary classifiers
+
+
 
 #' Build cv_splits (stratified 10-fold CV)
 set.seed(65778275)
