@@ -544,7 +544,7 @@ car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Logistic Regre
 #' This plot helps assess if the distribution of residuals follows a theoretical normal distribution.
 #'  If the points fall roughly along the red line, the residuals are approximately normally distributed.
 #'  Deviations from the line, especially S-shapes or curves, suggest non-normality.
-#'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
+#'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected). There are some outliers visible and even marked. Also we can observe S-shape forming and can conclude that it is not perfect.
 
 
 #'# Statistical Tests on Residuals
