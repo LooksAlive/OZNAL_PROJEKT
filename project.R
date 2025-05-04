@@ -23,6 +23,9 @@ library(purrr)
 library(gbm)
 library(randtests)
 library(lmtest)
+library(parsnip)
+library(workflows)
+library(yardstick)
 #'library(shiny)
 
 data <- read.csv("alzheimers_disease_data.csv")
@@ -198,7 +201,7 @@ chi_tbl <- map_dfr(factor_attrs_names[factor_attrs_names!="Diagnosis"], function
 
 #' Combine both result tables & sort by p-value
 test_results <- bind_rows(t_tbl, chi_tbl) %>% 
-                arrange(p_value)
+  arrange(p_value)
 print(test_results)
 
 predictors <- c(
@@ -293,31 +296,26 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 #' H0: The classification performance (e.g. AUC) of the base model built on MMSE, FunctionalAssessment, ADL, MemoryComplaints and BehavioralProblems is yealds little no none performance increase when we add the composite LRI. There is no gain from including the lifestyle index.
 
 
-# Based on EDA we selected 5 core predictors (MMSE, ADL, MemoryComplaints, BehavioralProblems, FunctionalAssessment) and concluded our models must check these requirements:
-# -Handle a binary outcome (Diagnosis ∈ {0,1})
-# -Accept a mix of numeric & factor predictors
-# -Work with 0% missing data (we have no NAs)
-# -Handle class imbalance (65% non-AD / 35% AD)
+#' Based on EDA we selected 5 core predictors (MMSE, ADL, MemoryComplaints, BehavioralProblems, FunctionalAssessment) and concluded our models must check these requirements:
+#' -Handle a binary outcome (Diagnosis ∈ {0,1})
+#' -Accept a mix of numeric & factor predictors
+#' -Work with 0% missing data (we have no NAs)
+#' -Handle class imbalance (65% non-AD / 35% AD)
 
-# Algorithms selected:
-# 1) Logistic Regression (GLM)
-#    -Models log-odds of AD as a weighted sum of predictors.
-#    -Each coefficient shows how much that feature shifts AD risk.
-#    -Works well on our 65/35 class split. 
-#    -We’ll pick the best probability cutoff via cross-validation.
-# 2) Gradient Boosting Machine (GBM)
-#    -Builds many small decision trees in sequence to improve predictions.
-#    -Automatically handles both numeric and factor inputs without extra preprocessing.
-#    -Captures non-linear effects and feature interactions that a straight-line model might miss.
+#' Algorithms selected:
+#' 1) Logistic Regression (GLM)
+#'    -Models log-odds of AD as a weighted sum of predictors.
+#'    -Each coefficient shows how much that feature shifts AD risk.
+#'    -Works well on our 65/35 class split. 
+#'    -We’ll pick the best probability cutoff via cross-validation.
+#' 2) Gradient Boosting Machine (GBM)
+#'    -Builds many small decision trees in sequence to improve predictions.
+#'    -Automatically handles both numeric and factor inputs without extra preprocessing.
+#'    -Captures non-linear effects and feature interactions that a straight-line model might miss.
 
-# We will therefore fit:
-# -Primary_model <- Logistic GLM
-# -Exploratory_model <- GBM
-
-
-
-
-
+#' We will therefore fit:
+#' -Primary_model <- Logistic GLM
+#' -Exploratory_model <- GBM
 
 
 
@@ -329,6 +327,7 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 # -Because we set strata = "Diagnosis", each fold preserves the 65/35 AD/non-AD ratio.
 # -Over all folds, every sample is used exactly once for testing and nine times for training.
 # -Averaging metrics (e.g. AUC, accuracy) across folds gives a robust estimate of expected performance and its variability.
+
 
 #' Build cv_splits (stratified 10-fold CV)
 set.seed(65778275)
@@ -447,15 +446,57 @@ model_primary <- glm(
 )
 
 summary(model_primary)
+#' # Final Logistic Regression Results
+#' We fitted a logistic model to predict Alzheimer’s diagnosis using our selected predictors.
+
+#' Coefficients & Interpretation (Intercept) = 5.05  
+#' –When all predictors are zero, the log-odds of AD are 5.05 (very high baseline probability).  
+#' Log-odds = 5.05 -> Odds = e^{5.05} ≈ 156 -> Probability = 156/(1+156) ≈ 0.994
+
+#' FunctionalAssessment = –0.48 (p < 2e-16)  
+#' –Higher functional ability is strongly associated with lower AD risk.  
+
+#' ADL = –0.44 (p < 2e-16)  
+#' –Better daily-living performance corresponds to substantially reduced AD risk.  
+
+#' MemoryComplaints1 = +2.52 (p < 2e-16)  
+#' –Reporting memory complaints is a clear indicator of increased AD likelihood.  
+
+#' BehavioralProblems1 = +2.45 (p < 2e-16)  
+#' –Presence of behavioral problems strongly signals higher odds of AD.  
+
+#' MMSE = –0.11 (p < 2e-16)  
+#' –Higher cognitive test scores are linked to lower probability of AD.  
+
+#' SleepQuality = –0.08 (p = 0.0746)  
+#' –Better sleep quality suggests some protection against AD, though this is only borderline significant.    
+
+#' CholesterolLDL = –0.003 (p = 0.159)  
+#' –No clear effect after accounting for other factors.  
+
+#' FamilyHistoryAlzheimers1 = –0.18 (p = 0.303)  
+#' –No significant effect in this multivariable context.  
+
+#' Model Fit Statistics
+#' Null deviance: 1955.2 on 1504 df  
+#' Residual deviance: 1097.7 on 1496 df  
+#' –Large drop indicates the predictors explain a lot of variation.  
+#' AIC: 1115.7  
+#' –Lower AIC signals a better trade-off between fit and complexity.  
+
+#' Convergence
+#' Fisher scoring iterations: 6 
+#' –The iterative fitting algorithm (IRLS) converged in 6 steps, showing stable estimates.
 
 
 
 
-set.seed(51635455)
+
+set.seed(65778275)
 #' Define the training control for 10-fold cross-validation
 train_control <- trainControl(method = "cv",  # Use cross-validation
                               number = 10,    # Specify the number of folds (k=10)
-                             )
+)
 #' Then, run the train() function again:
 model_cv <- train(
   as.factor(Diagnosis) ~ .,
@@ -468,7 +509,7 @@ model_cv <- train(
 #' Print the cross-validation results
 print(model_cv)
 #' from cross-validation we can see Accuracy of 0.8544415 and Kappa of 0.6684592
-#' Kappa is a metric that measures how much better is classifier is compared to random guessing
+#' Kappa is a metric that measures how much better classifier is compared to random guessing
 
 #' Multicolinearity
 vif(model_primary)
@@ -503,8 +544,7 @@ car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Logistic Regre
 #' This plot helps assess if the distribution of residuals follows a theoretical normal distribution.
 #'  If the points fall roughly along the red line, the residuals are approximately normally distributed.
 #'  Deviations from the line, especially S-shapes or curves, suggest non-normality.
-#'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected). There are some outliers visible and even marked. Also we can observe S-shape forming and 
-#' can conclude that it is not perfect.
+#'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
 
 
 #'# Statistical Tests on Residuals
@@ -846,4 +886,3 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
   theme(legend.position = "bottom") +
   annotate("text", x = 0.75, y = 0.25, label = paste("AUC (GLM) =", round(auc_primary, 3)), color = "cyan4") +
   annotate("text", x = 0.75, y = 0.20, label = paste("AUC (GBoost) =", round(auc_gboost, 3)), color = "red")
-
