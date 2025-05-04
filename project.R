@@ -358,7 +358,7 @@ combination_models <- regsubsets(Diagnosis ~ .,
 summary(combination_models)
 #' This resulting tables shows best combination of predictors for N number of
 #' predictors e.g. if we want just 1 - we pick FunctionalAssessment, for 2 predictors
-#' we pick FunctionalAssessment and MemoryComplaints, and for 3 we pick
+#' we pick FunctionalAssessment and ADL, and for 3 we pick
 #' FunctionalAssessment, MemoryComplaints and ADL, ...
 
 #' so we pick best combination of predictors
@@ -383,8 +383,8 @@ summary(model_primary)
 set.seed(51635455)
 #' Define the training control for 10-fold cross-validation
 train_control <- trainControl(method = "cv",  # Use cross-validation
-                              number = 10)    # Specify the number of folds (k=10)
-
+                              number = 10,    # Specify the number of folds (k=10)
+                             )
 #' Then, run the train() function again:
 model_cv <- train(
   as.factor(Diagnosis) ~ .,
@@ -596,6 +596,12 @@ cat("No Information Rate:", no_information_rate, "\n")
 
 #'# Cross-validation for GBM model
 
+
+
+
+
+
+
 data_for_gbm <- train_data[, c("Diagnosis", predictors)]
 
 #' convert Diagnosis to a factor with specific levels and labels - for train funciton
@@ -629,12 +635,6 @@ gbm_model_cv <- train(
 print(gbm_model_cv)
 #' average Accuracy for GBM cross-validation appears to be Average 95.2%,
 #' so it performs very well. also Kappa is 0.89 which is also very good result.
-
-
-
-
-
-
 
 gbm_model <- gbm(
   Diagnosis ~ ., # Formula: Predict 'Diagnosis' using all other columns in the specified data
