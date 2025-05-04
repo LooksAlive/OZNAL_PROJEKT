@@ -468,7 +468,7 @@ model_cv <- train(
 #' Print the cross-validation results
 print(model_cv)
 #' from cross-validation we can see Accuracy of 0.8544415 and Kappa of 0.6684592
-#' Kappa is a metric that measures how much better your classifier is compared to random guessing
+#' Kappa is a metric that measures how much better is classifier is compared to random guessing
 
 #' Multicolinearity
 vif(model_primary)
@@ -500,10 +500,11 @@ residuals_primary <- residuals(model_primary, type = "deviance")
 car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Logistic Regression")
 
 #' Interpretation of QQ-Plot:
-#' This plot helps assess if the distribution of your residuals follows a theoretical normal distribution.
+#' This plot helps assess if the distribution of residuals follows a theoretical normal distribution.
 #'  If the points fall roughly along the red line, the residuals are approximately normally distributed.
 #'  Deviations from the line, especially S-shapes or curves, suggest non-normality.
-#'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
+#'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected). There are some outliers visible and even marked. Also we can observe S-shape forming and 
+#' can conclude that it is not perfect.
 
 
 #'# Statistical Tests on Residuals
