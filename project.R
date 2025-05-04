@@ -352,11 +352,11 @@ print(cv_splits)
 
 #' Keep only variables required by the hypothesis
 core_vars <- c(predictors, 
-  #' non-modifiable risk factors
-  "FamilyHistoryAlzheimers", "HeadInjury",
-  #' lifestyle components
-  "PhysicalActivity", "DietQuality",
-  "Smoking", "AlcoholConsumption", "BMI"
+               # non-modifiable risk factors
+               "FamilyHistoryAlzheimers", "HeadInjury",
+               # lifestyle components
+               "PhysicalActivity", "DietQuality",
+               "Smoking", "AlcoholConsumption", "BMI"
 )
 
 data_hyp <- data_numeric %>% dplyr::select(all_of(core_vars))
@@ -364,18 +364,17 @@ data_hyp <- data_numeric %>% dplyr::select(all_of(core_vars))
 #' Change each lifestyle component into a binary risk flag
 #' (1 = risky level, 0 = healthy/reference level)
 data_hyp <- data_hyp %>% mutate(
-  pa_risk      = ifelse(PhysicalActivity   <  3, 1, 0),  #' < 3 h moderate PA / wk
-  diet_risk    = ifelse(DietQuality        <= 4, 1, 0),  #' low diet-quality score
-  sleep_risk   = ifelse(SleepQuality       <= 5, 1, 0),  #' poor sleep quality
-  smoke_risk   = ifelse(Smoking            == 1, 1, 0),  #' current smoker
-  alcohol_risk = ifelse(AlcoholConsumption  > 14,1, 0),  #' > 14 units / wk
-  bmi_risk     = ifelse(BMI                >= 30,1, 0)   #' obese
+  pa_risk      = ifelse(PhysicalActivity   <  3, 1, 0),  # < 3 h moderate PA / wk
+  diet_risk    = ifelse(DietQuality        <= 4, 1, 0),  # low diet-quality score
+  sleep_risk   = ifelse(SleepQuality       <= 5, 1, 0),  # poor sleep quality
+  smoke_risk   = ifelse(Smoking            == 1, 1, 0),  # current smoker
+  alcohol_risk = ifelse(AlcoholConsumption  > 14,1, 0),  # > 14 units / wk
+  bmi_risk     = ifelse(BMI                >= 30,1, 0)   # obese
 )
 #' Sum the six flags to obtain the Lifestyle-Risk-Index (LRI)
 data_hyp <- data_hyp %>% mutate(
   LRI = pa_risk + diet_risk + sleep_risk + smoke_risk + alcohol_risk + bmi_risk
 )
-#'str(data_hyp)
 
 data_numeric <- data_numeric %>% mutate(
   LRI = data_hyp$LRI
@@ -383,20 +382,6 @@ data_numeric <- data_numeric %>% mutate(
 data <- data %>% mutate(
   LRI = data_hyp$LRI
 )
-#'str(data)
-
-
-#' Final fix of factor levels & drop rows with any missing values
-#'data_hyp <- data_hyp %>% 
-#'  mutate(
-#'    Diagnosis = factor(Diagnosis, levels = c(0, 1)),  #' ensure 0 = No, 1 = Yes
-#'    Gender    = factor(Gender)                        #' guarantee factor type
-#'  ) %>% 
-#'  drop_na()
-
-
-
-
 
 
 
@@ -414,8 +399,8 @@ test_data  <- data_numeric[-train_index, ]
 
 set.seed(51635455)
 #' Define the training control for 10-fold cross-validation
-train_control <- trainControl(method = "cv", #' Use cross-validation
-                              number = 10)  #' Specify the number of folds (k=10)
+train_control <- trainControl(method = "cv",  # Use cross-validation
+                              number = 10)    # Specify the number of folds (k=10)
 
 #' Then, run the train() function again:
 model_cv <- train(
@@ -434,11 +419,11 @@ print(model_cv)
 
 library(pmsampsize)
 pmsampsize(
-  type = "b",              #' binary outcome
-  cstatistic = 0.85,       #' use AUC estimate if known, or guess ~0.85
-  parameters = 9,          #' number of predictor parameters
-  prevalence = 0.35,        #' proportion of positive outcome (e.g. Diagnosis = 1)
-  shrinkage = 0.9          #' to limit overfitting (default)
+  type = "b",              # binary outcome
+  cstatistic = 0.85,       # use AUC estimate if known, or guess ~0.85
+  parameters = 9,          # number of predictor parameters
+  prevalence = 0.35,       # proportion of positive outcome (e.g. Diagnosis = 1)
+  shrinkage = 0.9          # to limit overfitting (default)
 )
 #' the test shows us that:
 #' Minimum sample size required for new model development based on user inputs = 350
@@ -471,8 +456,8 @@ vif(model_primary)
 #' VIF values are < 5 therefore no multicolinearity is detected.
 
 #' Convert log-odds to odds-ratios
-exp(cbind(OddsRatios = coef(model_primary),   #' exponentiate → odds ratios
-          confint(model_primary)))    #' CIs for interpretation
+exp(cbind(OddsRatios = coef(model_primary),   # exponentiate → odds ratios
+          confint(model_primary)))            # CIs for interpretation
 
 #' For a one-unit increase in FunctionalAssessment, the odds of the positive 
 #' outcome are multiplied by approximately 0.64. This indicates that higher 
@@ -481,7 +466,7 @@ exp(cbind(OddsRatios = coef(model_primary),   #' exponentiate → odds ratios
 
 library(leaps)
 combination_models <- regsubsets(Diagnosis ~ .,
-                     data = train_data[, c("Diagnosis", second_predictors)])
+                                 data = train_data[, c("Diagnosis", second_predictors)])
 summary(combination_models)
 #' This resulting tables shows best combination of predictors for N number of
 #' predictors e.g. if we want just 1 - we pick FunctionalAssessment, for 2 predictors
@@ -498,43 +483,41 @@ summary(combination_models)
 #' Checking for the 3 Conditions
 
 #' 1. Randomness (Visual Check from QQ-Plot):
-#'    - If the points generally follow the red line, it suggests the residuals are
+#'    If the points generally follow the red line, it suggests the residuals are
 #'      not systematically deviating from the expected distribution under the model.
-#'    - Large deviations, especially curves or S-shapes, might indicate a lack of randomness
+#'    Large deviations, especially curves or S-shapes, might indicate a lack of randomness
 #'      or model misspecification.
 
 #' 2. Outliers (Visual Check from QQ-Plot):
-#'    - Points that are far away from the red line, particularly at the extreme ends (tails)
+#'    Points that are far away from the red line, particularly at the extreme ends (tails)
 #'      of the plot, can be potential outliers. These are observations that are much more
 #'      or less extreme than expected by the model.
 
 #' 3. Heteroscedasticity (Less Directly Assessed by QQ-Plot):
-#'    - A QQ-plot primarily assesses the distribution of the residuals, not directly their
+#'    A QQ-plot primarily assesses the distribution of the residuals, not directly their
 #'      variance across predicted values.
-#'    - However, severe deviations from the line might indirectly hint at issues with the
+#'    However, severe deviations from the line might indirectly hint at issues with the
 #'      variance if the model assumptions are violated.
-#'    - To more directly assess heteroscedasticity, the "Residuals vs. Predicted Values" plot
+#'    To more directly assess heteroscedasticity, the "Residuals vs. Predicted Values" plot
 #'      (as shown in the previous response) is more informative. Look for a funnel shape
 #'      or increasing/decreasing spread of residuals as predicted probabilities change.
 
 residuals_primary <- residuals(model_primary, type = "deviance")
-#'plot(model_primary)
 
 
-#' --- QQ-Plot for Residuals ---
-#'qqnorm(residuals_primary, main = "QQ-Plot of Deviance Residuals (Primary Model)")
-#'qqline(residuals_primary, col = "red")
+#'# QQ-Plot for Residuals
+# qqnorm(residuals_primary, main = "QQ-Plot of Deviance Residuals (Primary Model)")
+# qqline(residuals_primary, col = "red")
 
 car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Linear Regression")
 
 #' Interpretation of QQ-Plot:
 #' This plot helps assess if the distribution of your residuals follows a theoretical normal distribution.
-#' - If the points fall roughly along the red line, the residuals are approximately normally distributed.
-#' - Deviations from the line, especially S-shapes or curves, suggest non-normality.
-#' - Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
-#' Note: For logistic regression, perfect normality of residuals is not expected due to the binary outcome. Focus on severe deviations.
+#'  If the points fall roughly along the red line, the residuals are approximately normally distributed.
+#'  Deviations from the line, especially S-shapes or curves, suggest non-normality.
+#'  Points far away from the line at the ends indicate potential outliers (residuals that are much larger or smaller than expected).
 
-#' --- Statistical Tests on Residuals ---
+#'# Statistical Tests on Residuals
 
 #' Perform tests
 shapiro_test_result <- shapiro.test(residuals_primary)
@@ -544,8 +527,7 @@ tpt_result <- turning.point.test(residuals_primary)
 dw_test_result <- dwtest(model_primary)
 
 
-#' --- Table of Test Results ---
-
+#' Table of Test Results
 test_results_table <- data.frame(
   Test = c("Shapiro-Wilk Normality Test",
            "One-Sample t-test (Mean of Residuals)",
@@ -562,7 +544,7 @@ test_results_table <- data.frame(
               format.pval(bp_test_result$p.value, digits = 3),
               format.pval(tpt_result$p.value, digits = 3),
               format.pval(dw_test_result$p.value, digits = 3)),
-  Interpretation = character(5) #' Placeholder for GOOD/BAD
+  Interpretation = character(5) # Placeholder for GOOD/BAD
 )
 
 #' Fill the Interpretation column with GOOD/BAD
@@ -613,12 +595,12 @@ roc_obj_primary <- roc(test_data$Diagnosis, test_probs)
 auc_primary <- auc(roc_obj_primary)
 cat("AUC:", round(auc_primary, 3), "\n")
 
-#' Step 6: Get optimal threshold (Youden's J)
+#' Get optimal threshold
 coords_obj_primary <- coords(roc_obj_primary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
 optimal_threshold_primary <- coords_obj_primary["threshold"]
 optimal_threshold_primary
 
-#' Step 7: Confusion matrix - threshold 0.5
+#' Confusion matrix - threshold 0.5
 preds_default <- factor(ifelse(test_probs > 0.5, 1, 0), levels = c(0, 1))
 conf_matrix_default <- confusionMatrix(preds_default, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Threshold 0.5):\n")
@@ -631,7 +613,7 @@ conf_matrix_optimal <- confusionMatrix(preds_optimal, as.factor(test_data$Diagno
 cat("\nConfusion Matrix (Optimal Threshold):\n")
 print(conf_matrix_optimal)
 
-#' --- Visualize Confusion Matrices
+#' Visualize Confusion Matrices, this funciton will be also used later with GBM
 create_cm_df <- function(cm, model_name) {
   as.data.frame(cm$table) %>%
     mutate(Model = model_name)
@@ -665,12 +647,12 @@ cat("AUC (Secondary Model):", round(auc_secondary, 3), "\n")
 
 #' Here secondary model has slightly bigger auc.
 
-#' Optimal threshold (Youden's J) for secondary model
+#' Optimal threshold for secondary model
 coords_obj_secondary <- coords(roc_obj_secondary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
 optimal_threshold_secondary <- coords_obj_secondary["threshold"]
 optimal_threshold_secondary
 
-#' --- Visualize ROC Curves ---
+#' Visualize ROC Curves
 roc_df_primary <- data.frame(
   fpr = 1 - roc_obj_primary$specificities,
   tpr = roc_obj_primary$sensitivities,
@@ -807,29 +789,9 @@ cat("Categorical Predictors: Predicted probability for each level (vs. baseline,
 
 
 
-gbm_model <- gbm(
-  Diagnosis ~ ., #' Formula: Predict 'Diagnosis' using all other columns in the specified data
-  data = train_data[, c("Diagnosis", predictors)], #' Data frame and the columns to be used for training (Diagnosis and the selected predictors)
-  distribution = "bernoulli", #' - logistic #' Specifies the loss function to be used. "bernoulli" is appropriate for binary classification (0 or 1 outcomes like Diagnosis)
-  n.trees = 100, #' The number of boosting iterations to perform. Each tree is built sequentially, trying to correct the errors of the previous trees. More trees can lead to better performance but also increased risk of overfitting and longer training time.
-  shrinkage = 0.1, #' Also known as the learning rate. It scales the contribution of each tree. A smaller shrinkage value (e.g., 0.01, 0.1) makes the learning slower but often results in more robust models that generalize better.
-  interaction.depth = 6, #' The maximum depth of each tree. It controls the complexity of the interactions between predictors that the model can capture. A depth of 1 means the model is additive (no interactions), a depth of 2 allows for two-way interactions, and so on. Higher values can capture more complex relationships but also increase the risk of overfitting.
-  n.minobsinnode = 10, #' The minimum number of observations in the terminal nodes (leaves) of each tree. This parameter helps to regularize the model and prevent overfitting by ensuring that leaves are not too specific to small subsets of the training data.
-  verbose = FALSE #' A logical value indicating whether to print progress and performance updates during the training process. FALSE means no output during training.
-)
+#'# Cross-validation for GBM model
 
-#' Check summary (variable importance)
-summary(gbm_model)
-
-
-
-
-
-
-
-
-
-#' Your GBM model parameters
+#' GBM model parameters
 gbm_params <- list(
   distribution = "bernoulli",
   n.trees = 100,
@@ -839,7 +801,6 @@ gbm_params <- list(
   verbose = FALSE
 )
 
-#' Your data
 data_for_gbm <- train_data[, c("Diagnosis", predictors)]
 
 #' Explicitly convert Diagnosis to a factor with specific levels and labels
@@ -847,40 +808,52 @@ data_for_gbm$Diagnosis <- factor(data_for_gbm$Diagnosis,
                                  levels = c(0, 1), #' Ensure levels are 0 and 1 (numeric)
                                  labels = c("NoAD", "AD")) #' Label them for clarity
 
-#' Define the train control for cross-validation
+#' control for cross-validation
 train_control <- trainControl(
   method = "cv",
   number = 10,
   classProbs = TRUE,
-  summaryFunction = twoClassSummary
 )
 
-#' Train the GBM model using caret's train function
+#' Train
 gbm_model_cv <- train(
   Diagnosis ~ .,
   data = data_for_gbm,
   method = "gbm",
   trControl = train_control,
-  metric = "ROC",
+  metric = "Accuracy",
   tuneGrid = expand.grid(
-    n.trees = gbm_params$n.trees,
-    shrinkage = gbm_params$shrinkage,
-    interaction.depth = gbm_params$interaction.depth,
-    n.minobsinnode = gbm_params$n.minobsinnode
+    n.trees = 100,
+    shrinkage = 0.1,
+    interaction.depth = 6,
+    n.minobsinnode = 10
   ),
-  verbose = gbm_params$verbose
+  verbose = FALSE
 )
 
 print(gbm_model_cv)
-
-print(paste("Average CV ROC:", gbm_model_cv$results$ROC))
-
-#' average ROC for GBM cross-validation appears to be Average 0.948,
-#' so it performs very well.
+#' average Accuracy for GBM cross-validation appears to be Average 94.7%,
+#' so it performs very well. also Kappa is 0.88 which is also very good result.
 
 
 
 
+
+
+
+gbm_model <- gbm(
+  Diagnosis ~ ., # Formula: Predict 'Diagnosis' using all other columns in the specified data
+  data = train_data[, c("Diagnosis", predictors)], # Data frame and the columns to be used for training (Diagnosis and the selected predictors)
+  distribution = "bernoulli", # logistic - Specifies the loss function to be used. "bernoulli" is appropriate for binary classification (0 or 1 outcomes like Diagnosis)
+  n.trees = 100, # The number of boosting iterations to perform. Each tree is built sequentially, trying to correct the errors of the previous trees. More trees can lead to better performance but also increased risk of overfitting and longer training time.
+  shrinkage = 0.1, # Also known as the learning rate. It scales the contribution of each tree. A smaller shrinkage value (e.g., 0.01, 0.1) makes the learning slower but often results in more robust models that generalize better.
+  interaction.depth = 6, # The maximum depth of each tree. It controls the complexity of the interactions between predictors that the model can capture. A depth of 1 means the model is additive (no interactions), a depth of 2 allows for two-way interactions, and so on. Higher values can capture more complex relationships but also increase the risk of overfitting.
+  n.minobsinnode = 10, # The minimum number of observations in the terminal nodes (leaves) of each tree. This parameter helps to regularize the model and prevent overfitting by ensuring that leaves are not too specific to small subsets of the training data.
+  verbose = FALSE # A logical value indicating whether to print progress and performance updates during the training process. FALSE means no output during training.
+)
+
+#' summary - variable importance
+summary(gbm_model)
 
 #' Predict probabilities
 pred_probs <- predict(gbm_model, newdata = test_data, n.trees = 100, type = "response")
@@ -916,7 +889,7 @@ roc_obj_gboost <- roc(true_labels, pred_probs)
 auc_gboost <- auc(roc_obj_gboost)
 cat("AUC:", auc_gboost, "\n")
 
-#' Accuracy reached 95,76%
+#' Accuracy reached 95%
 
 
 coords_obj_gboost <- coords(roc_obj_gboost, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
@@ -947,7 +920,11 @@ ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
 
 
 
-#' --- Visualize ROC Curves ---
+#'# Comparison of models
+
+
+
+#' Visualize ROC Curves
 roc_df_primary <- data.frame(
   fpr = 1 - roc_obj_primary$specificities,
   tpr = roc_obj_primary$sensitivities,
@@ -978,38 +955,39 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
   annotate("text", x = 0.75, y = 0.20, label = paste("AUC (GBoost) =", round(auc_gboost, 3)), color = "red")
 
 
-#' Gradient Boosting Machine (GBM) Model Results:
+#'# GBM Model Results:
 
-#' Variable Importance:
-#'    The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
-#'    - FunctionalAssessment is the most important variable, with a relative influence of approximately 23.9%.
-#'    - MMSE and ADL are also highly influential, with relative influences of around 21.7% and 20.7%, respectively.
-#'    - MemoryComplaints and BehavioralProblems have moderate influence (around 15.7% and 13.3%).
-#'    - SleepQuality and CholesterolHDL appear to have the least influence on the model's predictions (2.7% and 1.9%).
+#' Variable Importance:\newline
+#'The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.\newline
+#'FunctionalAssessment is the most important variable, with a relative influence of approximately 23.9%.\newline
+#'MMSE and ADL are also highly influential, with relative influences of around 21.7% and 20.7%, respectively.\newline
+#'MemoryComplaints and BehavioralProblems have moderate influence (around 15.7% and 13.3%).\newline
+#'SleepQuality and CholesterolHDL appear to have the least influence on the model's predictions (2.7% and 1.9%).\newline
 
-#' Confusion Matrix and Statistics:
-#'    The confusion matrix on the test set (assuming this matrix was generated from the GBM model's predictions) shows the following:
-#'    - True Negatives (TN): 386 (Number of actual 0s correctly predicted as 0)
-#'    - False Negatives (FN): 25 (Number of actual 1s incorrectly predicted as 0)
-#'    - False Positives (FP): 13 (Number of actual 0s incorrectly predicted as 1)
-#'    - True Positives (TP): 220 (Number of actual 1s correctly predicted as 1)
+#' Confusion Matrix and Statistics:\newline
+#'The confusion matrix on the test set (assuming this matrix was generated from the GBM model's predictions) shows the following:\newline
+#'True Negatives (TN): 386 (Number of actual 0s correctly predicted as 0)\newline
+#'False Negatives (FN): 25 (Number of actual 1s incorrectly predicted as 0)\newline
+#'False Positives (FP): 13 (Number of actual 0s incorrectly predicted as 1)\newline
+#'True Positives (TP): 220 (Number of actual 1s correctly predicted as 1)\newline
 
 #' Performance Metrics:
-#'    - Accuracy: 0.941 (94.1% of predictions were correct)
-#'    - 95% Confidence Interval (CI) for Accuracy: (0.9199, 0.9579)
-#'    - No Information Rate (NIR): 0.6196 (Accuracy if the model always predicted the majority class)
-#'    - P-Value [Acc > NIR]: < 2e-16 (Highly significant, indicating the model's accuracy is significantly better than random guessing)
-#'    - Kappa: 0.8736 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
-#'    - Mcnemar's Test P-Value: 0.07435 (P-value for McNemar's chi-squared test, testing for symmetry of errors. A value > 0.05 suggests no significant difference in the types of errors)
-#'    - Sensitivity (Recall, True Positive Rate): 0.8980 (Proportion of actual 1s correctly identified)
-#'    - Specificity (True Negative Rate): 0.9674 (Proportion of actual 0s correctly identified)
-#'    - Positive Predictive Value (Precision): 0.9442 (Proportion of predicted 1s that were actually 1s)
-#'    - Negative Predictive Value: 0.9392 (Proportion of predicted 0s that were actually 0s)
-#'    - Prevalence: 0.3804 (Proportion of the positive class (1) in the test set)
-#'    - Detection Rate: 0.3416 (Proportion of the positive class correctly identified out of the total number of instances)
-#'    - Detection Prevalence: 0.3618 (Proportion of instances predicted as positive)
-#'    - Balanced Accuracy: 0.9327 (Average of sensitivity and specificity)
-#'    - 'Positive' Class: 1 (Indicates that class '1' was treated as the positive class for sensitivity and specificity calculations)
+#'Accuracy: 0.941 (94.1% of predictions were correct)
+#'95% Confidence Interval (CI) for Accuracy: (0.9199, 0.9579)
+#'No Information Rate (NIR): 0.6196 (Accuracy if the model always predicted the majority class)
+#'P-Value [Acc > NIR]: < 2e-16 (Highly significant, indicating the model's accuracy is significantly better than random guessing)
+#'Kappa: 0.8736 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
+#'Mcnemar's Test P-Value: 0.07435 (P-value for McNemar's chi-squared test, testing for symmetry of errors. A value > 0.05 suggests no significant difference in the types of errors)
+#'Sensitivity (Recall, True Positive Rate): 0.8980 (Proportion of actual 1s correctly identified)
+#'Specificity (True Negative Rate): 0.9674 (Proportion of actual 0s correctly identified)
+#'Positive Predictive Value (Precision): 0.9442 (Proportion of predicted 1s that were actually 1s)
+#'Negative Predictive Value: 0.9392 (Proportion of predicted 0s that were actually 0s)
+#'Prevalence: 0.3804 (Proportion of the positive class (1) in the test set)
+#'Detection Rate: 0.3416 (Proportion of the positive class correctly identified out of the total number of instances)
+#'Detection Prevalence: 0.3618 (Proportion of instances predicted as positive)
+#'Balanced Accuracy: 0.9327 (Average of sensitivity and specificity)
+#'Positive' Class: 1 (Indicates that class '1' was treated as the positive class for sensitivity and specificity calculations)
 
 #' Area Under the ROC Curve (AUC):
-#'    - AUC: 0.9534141 (This indicates excellent discriminatory power of the GBM model. An AUC of 0.95 suggests a high ability to distinguish between the positive and negative classes.)
+#'AUC: 0.9534141 (This indicates excellent discriminatory power of the GBM model. An AUC of 0.95 suggests a high ability to distinguish between the positive and negative classes.)
+
