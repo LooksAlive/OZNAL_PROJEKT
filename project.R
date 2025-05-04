@@ -558,7 +558,6 @@ pmsampsize(
 # the test shows us that:
 # Minimum sample size required for new model development based on user inputs = 350
 
-
 model_primary <- glm(
   Diagnosis ~ .,
   data = train_data[, c("Diagnosis", predictors)],
@@ -657,7 +656,7 @@ shapiro_test_result <- shapiro.test(residuals_primary)
 ttest_result <- t.test(residuals_primary)
 bp_test_result <- bptest(model_primary)
 tpt_result <- turning.point.test(residuals_primary)
-dwtest(model_primary)
+dw_test_result <- dwtest(model_primary)
 
 
 # --- Table of Test Results ---
@@ -828,6 +827,71 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
 
 
 
+
+
+
+
+
+
+majority_class <- names(which.max(table(data_numeric$Diagnosis)))
+majority_class_count <- max(table(data_numeric$Diagnosis))
+total_samples <- nrow(data_numeric)
+no_information_rate <- majority_class_count / total_samples
+
+cat("Majority Class:", majority_class, "\n")
+cat("No Information Rate:", no_information_rate, "\n")
+
+# Logistic regression model's accuracy is higher than the No Information Rate.
+# Therefore our model is learning useful information from the predictors.
+
+
+
+
+
+
+
+
+
+
+
+
+
+logit_p_opt <- log(optimal_threshold_primary / (1 - optimal_threshold_primary))
+coefs <- coef(model_primary)
+intercept <- coefs["(Intercept)"]
+
+results <- data.frame(Predictor = predictors, Calculated_Value = NA)
+
+for (i in seq_along(predictors)) {
+  pred <- predictors[i]
+  if (pred %in% names(coefs)) {
+    coeff <- coefs[pred]
+    if (is.numeric(data_numeric[[pred]])) {
+      results[i, "Calculated_Value"] <- round((logit_p_opt - intercept) / coeff, 3)
+    } else if (is.factor(data_numeric[[pred]])) {
+      levels_info <- ""
+      baseline <- levels(data_numeric[[pred]])[1]
+      prob_base <- round(plogis(intercept), 3)
+      levels_info <- paste0(baseline, "(Base):", prob_base, "; ")
+      for (level in levels(data_numeric[[pred]])[-1]) {
+        coeff_name <- paste0(pred, level)
+        if (coeff_name %in% names(coefs)) {
+          prob <- round(plogis(intercept + coefs[coeff_name]), 3)
+          levels_info <- paste0(levels_info, level, ":", prob, "; ")
+        }
+      }
+      results[i, "Calculated_Value"] <- levels_info
+    }
+  } else {
+    results[i, "Calculated_Value"] <- "N/A"
+  }
+}
+
+print(results)
+
+cat("\nExplanation:\n")
+cat("Continuous Predictors: Approximate predictor value at the optimal probability (others at zero).\n")
+cat("Categorical Predictors: Predicted probability for each level (vs. baseline, others at zero).\n")
 
 
 
