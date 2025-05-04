@@ -25,7 +25,6 @@ library(randtests)
 library(lmtest)
 #'library(shiny)
 
-setwd("/home/adam/Plocha/skola/8. Semester/OZNAL/Elements of AI/Case Study/OZNAL_PROJEKT")
 data <- read.csv("alzheimers_disease_data.csv")
 
 
