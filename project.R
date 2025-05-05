@@ -690,6 +690,8 @@ cat("No Information Rate:", no_information_rate, "\n")
 #' Root Mean Square Error (RMSE): 0.4833
 #' Mean Square Error (MSE): 0.2336
 #' Mean Absolute Error (MAE): 0.4003
+#' 
+#' In the article they found SEL outperformed other ML techniques. We refrained from using this technique due to simplicity and interpretability. Also single GBM is more efficient to run than stacked ensemble learning. 
 
 
 
