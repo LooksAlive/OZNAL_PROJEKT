@@ -26,7 +26,6 @@ library(lmtest)
 library(parsnip)
 library(workflows)
 library(yardstick)
-#'library(shiny)
 
 data <- read.csv("alzheimers_disease_data.csv")
 
@@ -449,6 +448,9 @@ summary(model_primary)
 #' –The iterative fitting algorithm (IRLS) converged in 6 steps, showing stable estimates.
 
 
+saveRDS(model_primary, "glm_model.rds")
+
+
 #' Evaluate that final GLM on the held-out 30%
 test_probs <- predict(model_primary, test_data, type = "response")
 test_pred_class <- factor(ifelse(test_probs > 0.5, "1", "0"),
@@ -720,6 +722,9 @@ summary(gbm_model)
 #' The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
 #' MSE is the most important variable, with a relative influence of approximately 24%.
 #' MMSE and ADL are also highly influential, with relative influences of around 21% and 20%.
+
+
+saveRDS(gbm_model, "gbm_model.rds")
 
 
 #' Predict probabilities
