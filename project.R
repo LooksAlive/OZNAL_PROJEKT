@@ -207,11 +207,7 @@ print(test_results)
 predictors <- c(
   "FunctionalAssessment", "ADL", 
   "MemoryComplaints", "BehavioralProblems",
-  "MMSE", "CholesterolHDL", "SleepQuality", 
-  
-  "Ethnicity", "Hypertension", "CholesterolLDL",
-  
-  "FamilyHistoryAlzheimers", "Disorientation", "Forgetfulness"
+  "MMSE", "CholesterolHDL", "SleepQuality"
 )
 
 
@@ -293,9 +289,8 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 
 
 #'# Hypothesis formulation
-#' H1: Age, Gender, FamilyHistoryAlzheimers, HeadInjury, MMSE, FunctionalAssessment, ADL,
-#'     MemoryComplaints, BehavioralProblems, CholesterolHDL, SleepQuality, EducationLevel,
-#'     and Ethnicity are all significantly associated with Alzheimer’s Disease diagnosis.
+#' H1: MMSE, FunctionalAssessment, ADL, MemoryComplaints, BehavioralProblems, 
+#' CholesterolHDL, SleepQuality,  are all significantly associated with Alzheimer’s Disease diagnosis.
 
 
 
@@ -373,7 +368,7 @@ cv_splits <- rsample::vfold_cv(
 print(cv_splits)
 
 
-#' Use those splits to estimate CV performance (no new data is created here. fit_resamples will train on 9/10 folds and test on the held-out 1/10 in each round)
+#' We used those splits to estimate CV performance (no new data is created here. fit_resamples will train on 9/10 folds and test on the held-out 1/10 in each round)
 #' Specify a logistic regression model
 glm_spec <- logistic_reg() %>% set_engine("glm")  
 
@@ -428,6 +423,31 @@ summary(model_primary)
 #'  –SleepQuality: weak evidence for protection (p≈0.05)  
 #'  –HDL cholesterol: small increase in AD risk per unit rise  
 #'  In other words, all predictors except SleepQuality are clearly significant at p<0.05.
+#'  
+#' # Final Logistic Regression Results
+#' We fitted a logistic model to predict Alzheimer’s diagnosis using our selected predictors.
+
+#' Coefficients & Interpretation (Intercept) = 4.32 
+#' When all predictors are zero, the log-odds of AD are 4.33 (high baseline probability).
+#' Log-odds = 4.33 -> Odds = exp(4.33) ≈ 76.0 -> Probability = 76.0 / (1 + 76.0) ≈ 0.987
+#'  FunctionalAssessment = –0.48 (p < 2e-16)
+  
+#' Higher functional ability is strongly associated with a significant decrease in the log-odds of AD.
+#'  ADL = –0.44 (p < 2e-16)
+  
+#' Better performance in activities of daily living corresponds to a significant reduction in the log-odds of AD.
+#'  MemoryComplaints = +2.52 (p < 2e-16)
+
+#' Model Fit Statistics
+#' Null deviance: 1955.2 on 1504 df  
+#' Residual deviance: 1095.4 on 1497 df  
+#' –Large drop indicates the predictors explain a lot of variation.  
+#' AIC: 1111.4  
+
+#' Convergence
+#' Fisher scoring iterations: 6 
+#' –The iterative fitting algorithm (IRLS) converged in 6 steps, showing stable estimates.
+
 
 #' Evaluate that final GLM on the held-out 30%
 test_probs <- predict(model_primary, test_data, type = "response")
@@ -465,85 +485,6 @@ summary(combination_models)
 #' we pick FunctionalAssessment and ADL, and for 3 we pick
 #' FunctionalAssessment, MemoryComplaints and ADL, ...
 
-#' so we pick best combination of predictors
-predictors <- c(
-  "FunctionalAssessment", "ADL", 
-  "MemoryComplaints", "BehavioralProblems",
-  "MMSE", "SleepQuality", 
-  "CholesterolLDL", "FamilyHistoryAlzheimers"
-)
-
-model_primary <- glm(
-  Diagnosis ~ .,
-  data = train_data[, c("Diagnosis", predictors)],
-  family = binomial
-)
-
-summary(model_primary)
-#' # Final Logistic Regression Results
-#' We fitted a logistic model to predict Alzheimer’s diagnosis using our selected predictors.
-
-#' Coefficients & Interpretation (Intercept) = 5.05  
-#' –When all predictors are zero, the log-odds of AD are 5.05 (very high baseline probability).  
-#' Log-odds = 5.05 -> Odds = e^{5.05} ≈ 156 -> Probability = 156/(1+156) ≈ 0.994
-
-#' FunctionalAssessment = –0.48 (p < 2e-16)  
-#' –Higher functional ability is strongly associated with lower AD risk.  
-
-#' ADL = –0.44 (p < 2e-16)  
-#' –Better daily-living performance corresponds to substantially reduced AD risk.  
-
-#' MemoryComplaints1 = +2.52 (p < 2e-16)  
-#' –Reporting memory complaints is a clear indicator of increased AD likelihood.  
-
-#' BehavioralProblems1 = +2.45 (p < 2e-16)  
-#' –Presence of behavioral problems strongly signals higher odds of AD.  
-
-#' MMSE = –0.11 (p < 2e-16)  
-#' –Higher cognitive test scores are linked to lower probability of AD.  
-
-#' SleepQuality = –0.08 (p = 0.0746)  
-#' –Better sleep quality suggests some protection against AD, though this is only borderline significant.    
-
-#' CholesterolLDL = –0.003 (p = 0.159)  
-#' –No clear effect after accounting for other factors.  
-
-#' FamilyHistoryAlzheimers1 = –0.18 (p = 0.303)  
-#' –No significant effect in this multivariable context.  
-
-#' Model Fit Statistics
-#' Null deviance: 1955.2 on 1504 df  
-#' Residual deviance: 1097.7 on 1496 df  
-#' –Large drop indicates the predictors explain a lot of variation.  
-#' AIC: 1115.7  
-#' –Lower AIC signals a better trade-off between fit and complexity.  
-
-#' Convergence
-#' Fisher scoring iterations: 6 
-#' –The iterative fitting algorithm (IRLS) converged in 6 steps, showing stable estimates.
-
-
-
-
-
-set.seed(65778275)
-#' Define the training control for 10-fold cross-validation
-train_control <- trainControl(method = "cv",  # Use cross-validation
-                              number = 10,    # Specify the number of folds (k=10)
-)
-#' Then, run the train() function again:
-model_cv <- train(
-  as.factor(Diagnosis) ~ .,
-  data = train_data[, c("Diagnosis", predictors)],
-  method = "glm",
-  family = "binomial",
-  trControl = train_control
-)
-
-#' Print the cross-validation results
-print(model_cv)
-#' from cross-validation we can see Accuracy of 0.8544415 and Kappa of 0.6684592
-#' Kappa is a metric that measures how much better classifier is compared to random guessing
 
 #' Multicolinearity
 vif(model_primary)
@@ -564,7 +505,6 @@ exp(cbind(OddsRatios = coef(model_primary),   # exponentiate → odds ratios
 
 #' Checking Conditions for residuals
 
-
 residuals_primary <- residuals(model_primary, type = "deviance")
 
 
@@ -583,11 +523,24 @@ car::qqPlot(residuals_primary, main = "Q-Q Plot of Residuals from Logistic Regre
 
 #'# Statistical Tests on Residuals
 
-#' Perform tests
+#' 1. Shapiro-Wilk normality test
+#'    Checks whether the residuals come from a normal distribution.
 shapiro_test_result <- shapiro.test(residuals_primary)
+
+#' 2. One-sample t-test for mean zero
+#'    Tests if the average residual is significantly different from zero.
 ttest_result <- t.test(residuals_primary)
+
+#' 3. Breusch-Pagan test for heteroscedasticity
+#'    Examines whether the variance of the residuals is constant (homoscedastic).
 bp_test_result <- bptest(model_primary)
+
+#' 4. Turning point test for randomness
+#'    Assesses serial independence by counting the number of turning points in the residual series.
 tpt_result <- turning.point.test(residuals_primary)
+
+#' 5. Durbin-Watson test for autocorrelation
+#'    Detects first-order autocorrelation in the residuals (whether successive errors are correlated).
 dw_test_result <- dwtest(model_primary)
 
 
@@ -655,7 +608,7 @@ roc_obj_primary <- roc(test_data$Diagnosis, test_probs)
 auc_primary <- auc(roc_obj_primary)
 cat("AUC:", round(auc_primary, 3), "\n")
 
-#' Area under the curve for glm model is 0.908
+#' Area under the curve for glm model is 0.891
 
 #' Get optimal threshold
 coords_obj_primary <- coords(roc_obj_primary, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
@@ -668,9 +621,8 @@ conf_matrix_default <- confusionMatrix(preds_default, as.factor(test_data$Diagno
 cat("\nConfusion Matrix (Threshold 0.5):\n")
 print(conf_matrix_default)
 
-optimal_threshold_primary
 #' Confusion matrix - optimal threshold
-preds_optimal <- factor(ifelse(test_probs > 0.3463317, 1, 0), levels = c(0, 1))
+preds_optimal <- factor(ifelse(test_probs > optimal_threshold_primary$threshold, 1, 0), levels = c(0, 1))
 conf_matrix_optimal <- confusionMatrix(preds_optimal, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Optimal Threshold):\n")
 print(conf_matrix_optimal)
@@ -682,9 +634,9 @@ create_cm_df <- function(cm, model_name) {
 }
 
 cm_df_primary_default <- create_cm_df(conf_matrix_default, "GLM (Th=0.5)")
-cm_df_primary_optimal <- create_cm_df(conf_matrix_optimal, "GLM (Th=0.3463317)")
+cm_df_optimal <- create_cm_df(conf_matrix_optimal, paste0("Primary (Th=", round(optimal_threshold_primary$threshold, 3), ")"))
 
-cm_df_primary <- rbind(cm_df_primary_default, cm_df_primary_optimal)
+cm_df_primary <- rbind(cm_df_primary_default, cm_df_optimal)
 
 ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
   geom_tile() +
@@ -706,7 +658,7 @@ no_information_rate <- majority_class_count / total_samples
 cat("Majority Class:", majority_class, "\n")
 cat("No Information Rate:", no_information_rate, "\n")
 
-#' Logistic regression model's accuracy is higher than the No Information Rate.
+#' Logistic regression model's accuracy is higher than the No Information Rate(0.64).
 #' Therefore our model is learning useful information from the predictors.
 
 
@@ -764,8 +716,8 @@ summary(gbm_model)
 
 #' Variable Importance:
 #' The summary of the GBM model indicates the relative influence of each predictor variable on the model's predictions.
-#' MSE is the most important variable, with a relative influence of approximately 23.87%.
-#' MMSE and ADL are also highly influential, with relative influences of around 23.85% and 20.5%.
+#' MSE is the most important variable, with a relative influence of approximately 24%.
+#' MMSE and ADL are also highly influential, with relative influences of around 21% and 20%.
 
 
 #' Predict probabilities
@@ -785,11 +737,11 @@ print(conf_mat)
 #'False Negatives (FN): (Number of actual 1s incorrectly predicted as 0)
 #'False Positives (FP): (Number of actual 0s incorrectly predicted as 1)
 #'True Positives (TP): (Number of actual 1s correctly predicted as 1)
-#'Accuracy: (93% of predictions were correct)
-#'95% Confidence Interval (CI) for Accuracy: (0.9164, 0.9553)
+#'Accuracy: (94% of predictions were correct)
+#'95% Confidence Interval (CI) for Accuracy: (0.9234, 0.9605)
 #'No Information Rate (NIR): (Accuracy if the model always predicted the majority class)
 #'P-Value [Acc > NIR]: < 2e-16 (Highly significant, indicating the model's accuracy is significantly better than random guessing)
-#'Kappa: 0.867 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
+#'Kappa: 0.8763 (Measure of agreement between predicted and actual classifications, with 1 being perfect agreement)
 #'Mcnemar's Test P-Value: 0.02064 (P-value for McNemar's chi-squared test, testing for symmetry of errors. A value > 0.05 suggests no significant difference in the types of errors)
 #'Sensitivity (Recall, True Positive Rate): (Proportion of actual 1s correctly identified)
 #'Specificity (True Negative Rate): (Proportion of actual 0s correctly identified)
@@ -823,16 +775,15 @@ roc_obj_gboost <- roc(true_labels, pred_probs)
 auc_gboost <- auc(roc_obj_gboost)
 cat("AUC:", auc_gboost, "\n")
 
-#' Area Under the ROC Curve (AUC) - 95.6%:
+#' Area Under the ROC Curve (AUC) - 0.95%:
 
 
 
 coords_obj_gboost <- coords(roc_obj_gboost, "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
 optimal_threshold_gboost <- coords_obj_gboost["threshold"]
-optimal_threshold_gboost
 
 
-preds_optimal <- factor(ifelse(pred_probs > 0.2428418, 1, 0), levels = c(0, 1))
+preds_optimal <- factor(ifelse(pred_probs > optimal_threshold_gboost$threshold, 1, 0), levels = c(0, 1))
 conf_matrix_optimal <- confusionMatrix(preds_optimal, as.factor(test_data$Diagnosis), positive = "1")
 cat("\nConfusion Matrix (Optimal Threshold):\n")
 print(conf_matrix_optimal)
@@ -840,8 +791,7 @@ print(conf_matrix_optimal)
 
 
 cm_df_default <- create_cm_df(conf_mat, "Primary (Th=0.5)")
-cm_df_optimal <- create_cm_df(conf_matrix_optimal, "Primary (Th=0.2641755)")
-
+cm_df_optimal <- create_cm_df(conf_matrix_optimal, paste0("Primary (Th=", round(optimal_threshold_gboost, 3), ")"))
 cm_df_primary <- rbind(cm_df_default, cm_df_optimal)
 
 ggplot(cm_df_primary, aes(x = Reference, y = Prediction, fill = Freq)) +
@@ -888,3 +838,4 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
   theme(legend.position = "bottom") +
   annotate("text", x = 0.75, y = 0.25, label = paste("AUC (GLM) =", round(auc_primary, 3)), color = "cyan4") +
   annotate("text", x = 0.75, y = 0.20, label = paste("AUC (GBoost) =", round(auc_gboost, 3)), color = "red")
+
