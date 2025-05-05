@@ -344,7 +344,7 @@ ggplot(data, aes(x = Diagnosis, y = SleepQuality, fill = Diagnosis)) +
 #’ Alternative resampling schemes (besides Stratified 10-fold CV):
 #’ -Stratified repeated k-fold CV (e.g. 5×10-fold):  
 #’ --Like 10-fold CV, but runs it multiple times with new fold splits  
-#’ --Further reduces variance of your performance estimates  
+#’ --Further reduces variance of performance estimates  
 #’ -Stratified Monte Carlo CV (repeated random splits):  
 #’ --Randomly split into, say, 70/30 train/test many times  
 #’ --Flexible train/test ratio, but may leave out some samples consistently  
