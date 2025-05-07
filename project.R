@@ -26,6 +26,7 @@ library(lmtest)
 library(parsnip)
 library(workflows)
 library(yardstick)
+library(e1071) # For Naive Bayes
 
 data <- read.csv("alzheimers_disease_data.csv")
 
@@ -845,4 +846,33 @@ ggplot(roc_df_combined, aes(x = fpr, y = tpr, color = model)) +
   theme(legend.position = "bottom") +
   annotate("text", x = 0.75, y = 0.25, label = paste("AUC (GLM) =", round(auc_primary, 3)), color = "cyan4") +
   annotate("text", x = 0.75, y = 0.20, label = paste("AUC (GBoost) =", round(auc_gboost, 3)), color = "red")
+
+
+
+
+
+
+# Naive Bayes model
+nb_model <- naiveBayes(Diagnosis ~ ., data = train_data[c("Diagnosis", predictors)])
+
+nb_predictions_prob <- predict(nb_model, newdata = test_data, type = "raw")
+nb_predictions_class <- predict(nb_model, newdata = test_data, type = "class")
+
+
+# Calculate ROC AUC
+roc_obj <- roc(test_data$Diagnosis, nb_predictions_prob[, "1"])
+auc_value <- auc(roc_obj)
+print(paste("Naive Bayes Test Set AUC:", round(auc_value, 4)))
+
+# Confusion Matrix
+conf_matrix_nb <- confusionMatrix(nb_predictions_class, test_data$Diagnosis, positive = "1")
+print("\nNaive Bayes Test Set Confusion Matrix:")
+print(conf_matrix_nb)
+
+
+
+
+
+
+
 
