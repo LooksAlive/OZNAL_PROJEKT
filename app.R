@@ -360,7 +360,7 @@ plotConfusionGrid <- function(model, newdata, threshold = 0.5) {
   ggplot(df, aes(Prediction, Reference, fill = Count)) +
     geom_tile(color="black", size=0.6) +
     geom_text(aes(label = Count), size = 6) +
-    scale_fill_gradient(low="white", high="lightblue") +
+    scale_fill_gradient(low="pink", high="purple4") +
     labs(x="Predicted", y="Actual", title="Confusion Matrix (Test Set)") +
     theme_minimal(base_size = 14) +
     theme(plot.title = element_text(hjust=0.5),
