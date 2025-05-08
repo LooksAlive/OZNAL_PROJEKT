@@ -4,6 +4,7 @@ library(gbm)
 library(caret)
 library(pROC)
 library(ggplot2)
+library(scales)
 
 
 
@@ -163,6 +164,11 @@ glm_model_exp <- readRDS("glm_model.rds")
 gbm_model_exp <- readRDS("gbm_model.rds");
 
 
+
+
+# ------------------------------------------------------------------------------
+## Functions
+
 # Function to make some nice tooltips
 make_tooltip <- function(items) {
   # items: a named character vector or list
@@ -175,6 +181,84 @@ make_tooltip <- function(items) {
   )
   paste(entries, collapse = "\n")
 }
+
+# Function for variable‐importance plot for any caret::train model
+plotImportance <- function(model) {
+  # produce a data.frame of (Variable, Importance)
+  if (model$method == "glm") {
+    # for glm, use absolute value of the coefficients
+    coefs <- coef(model$finalModel)
+    df    <- data.frame(
+      Variable   = names(coefs)[-1],
+      Importance = abs(as.numeric(coefs[-1]))
+    )
+  } else if (model$method == "gbm") {
+    imp   <- summary(model, plotit=FALSE)
+    df     <- data.frame(
+      Variable   = imp$var,
+      Importance = imp$rel.inf
+    )
+  } else stop("Unsupported model for plotImportance")
+  
+  ggplot(df, aes(x = reorder(Variable, Importance), y = Importance, fill = Variable)) +
+    geom_col() +
+    coord_flip() +
+    scale_fill_manual(values = rainbow(nrow(df))) +
+    labs(x = "Predictor", y = "Importance") +
+    theme_minimal() +
+    theme(legend.position = "none")
+}
+
+# Function for ROC‐curve plot for any caret::train model with saved preds
+plotROC <- function(model) {
+  # pull out the “Yes” probs & true obs from the cross-val preds (if available)
+  if (!is.null(model$pred)) {
+    bestTuneCols <- names(model$bestTune)
+    # assume there’s only one tuning parameter for simplicity:
+    tuneName <- bestTuneCols[1]
+    bestVal  <- model$bestTune[[1]]
+    preds    <- model$pred[ model$pred[[tuneName]] == bestVal, ]
+    roc_obj  <- pROC::roc(preds$obs,  preds$Yes)
+  } else {
+    # fallback: ROC on entire training set
+    td   <- model$trainingData
+    actual <- td$.outcome
+    X      <- td[, setdiff(names(td), ".outcome"), drop=FALSE]
+    if (model$method == "glm") {
+      probs <- predict(model, X, type = "prob")[, "Yes"]
+    } else if (model$method == "gbm") {
+      probs <- predict(
+        model$finalModel, 
+        newdata = X, 
+        n.trees = model$bestTune$n.trees, 
+        type    = "response"
+      )
+    }
+    roc_obj <- pROC::roc(actual, probs)
+  }
+  
+  # build a small data.frame for ggplot
+  roc_df <- data.frame(
+    fpr = 1 - roc_obj$specificities,
+    tpr = roc_obj$sensitivities
+  )
+  auc_val <- pROC::auc(roc_obj)
+  
+  ggplot(roc_df, aes(x = fpr, y = tpr)) +
+    geom_line(size = 1, color = if (model$method=="glm") "royalblue" else "brown") +
+    geom_abline(linetype="dashed", color="grey") +
+    labs(
+      x     = "1 - Specificity (FPR)",
+      y     = "Sensitivity (TPR)",
+      caption = paste("AUC =", round(auc_val, 3))
+    ) +
+    theme_minimal() +
+    theme(plot.caption = element_text(hjust = 1))
+}
+
+
+
+
 
 ## LISTS FOR MANUAL TESTS FOR KEY PREDICTORS
 # List of the 10 ADL items and their simple descriptions based on Barthel Index
@@ -328,6 +412,15 @@ ui <- fluidPage(
           h3("Prediction Results"),
           verbatimTextOutput("prediction"),
           conditionalPanel(
+            condition = "input.model_type == 'Logistic Regression (GLM)'",
+            h4("GLM Predictor Importance"),
+            plotOutput("glm_importance_plot"),
+            hr(),
+            h4("ROC Curve (GLM)"),
+            plotOutput("glm_roc_plot")
+          ),
+          
+          conditionalPanel(
             condition = "input.model_type == 'Gradient Boosting Machine (GBM)'",
             h4("GBM Predictor Importance"),
             plotOutput("gbm_importance_plot"),
@@ -394,26 +487,24 @@ server <- function(input, output) {
     cat("Prob:", round(p$prob,3), "\nPrediction:", p$class)
   })
   
-  # GBM Feature Importance Plot
-  output$gbm_importance_plot <- renderPlot({
-    req(input$model_type == "Gradient Boosting Machine (GBM)")
-    imp <- summary(gbm_model, plotit=FALSE)
-    df  <- data.frame(Variable = imp$var, Importance=imp$rel.inf)
-    ggplot(df, aes(reorder(Variable,Importance), Importance)) +
-      geom_col() + coord_flip() +
-      labs(title="GBM Importance")
+  # Feature Importance part
+  output$glm_importance_plot <- renderPlot({
+    req(input$model_type == "Logistic Regression (GLM)")
+    plotImportance(glm_model)
+  })
+  output$glm_roc_plot <- renderPlot({
+    req(input$model_type == "Logistic Regression (GLM)")
+    plotROC(glm_model)
   })
   
-  print(names(gbm_model$pred))
-  
+  # ROC part
+  output$gbm_importance_plot <- renderPlot({
+    req(input$model_type == "Gradient Boosting Machine (GBM)")
+    plotImportance(gbm_model)
+  })
   output$gbm_roc_plot <- renderPlot({
     req(input$model_type == "Gradient Boosting Machine (GBM)")
-    # use the saved CV predictions
-    best_nt <- gbm_model$bestTune$n.trees
-    cvpreds <- gbm_model$pred[ gbm_model$pred$n.trees == best_nt, ]
-    roc_obj <- roc(cvpreds$obs, cvpreds$Yes)
-    plot(roc_obj, legacy.axes=TRUE, main="GBM CV–ROC")
-    abline(0,1,lty=2,col="grey")
+    plotROC(gbm_model)
   })
   
   # EDA Tab
