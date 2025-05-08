@@ -4,9 +4,148 @@ library(caret)
 library(pROC)
 library(ggplot2)
 
+
+data_raw <- read.csv("alzheimers_disease_data.csv")
+data <- data_raw %>% dplyr::select(-DoctorInCharge, -PatientID)
+
+# assume your original column is numeric 0/1; convert to a 2-level factor:
+data$Diagnosis <- factor(
+  data$Diagnosis,
+  levels = c(0, 1),
+  labels = c("No", "Yes")
+)
+
+# ——— 2) Set up trainControl for classification + ROC + saved preds ———
+gbm_ctrl <- trainControl(
+  method            = "cv",            # 10-fold CV
+  number            = 10,
+  classProbs        = TRUE,            # save P(Yes), P(No)
+  summaryFunction   = twoClassSummary,
+  savePredictions   = "all",           # stash out-of-fold probs in $pred
+  verboseIter       = FALSE
+)
+
+# ——— 3) Train your models once at startup ———
+
+# 3a) GLM (no resampling)
+glm_model <- train(
+  Diagnosis ~ FunctionalAssessment + ADL + MemoryComplaints +
+    BehavioralProblems + MMSE + CholesterolHDL + SleepQuality,
+  data     = data,
+  method   = "glm",
+  family   = binomial(),
+  trControl = trainControl(method = "none")  # no CV here
+)
+
+# 3b) GBM (with ROC tuning & saved predictions)
+set.seed(2025)
+gbm_model <- train(
+  Diagnosis ~ FunctionalAssessment + ADL + MemoryComplaints +
+    BehavioralProblems + MMSE + CholesterolHDL + SleepQuality,
+  data      = data,
+  method    = "gbm",
+  metric    = "ROC",        # optimize AUC
+  trControl = gbm_ctrl,
+  verbose   = FALSE
+)
+
+
+# EDA
+# Pre-calculate EDA elements
+outcome_table <- table(data$Diagnosis)
+outcome_prop <- prop.table(outcome_table)
+
+
+#' Convert low-cardinality (few unique values) numerics to factors
+for (col_name in names(data)) {
+  # Check if column type is numeric and has less than 6 unique values
+  if (is.numeric(data[[col_name]]) && length(unique(data[[col_name]])) <= 5) {
+    data <- data %>%
+      # unquote string to process as symbol (was headache without it)
+      mutate(!!sym(col_name) := as.factor(!!sym(col_name)))
+  }
+}
+
+
+numeric_attrs_names <- data %>% dplyr::select(where(is.numeric), -Diagnosis) %>% names()
+factor_attrs_names <- data %>%  select_if(is.factor) %>% names()
+
+numeric_attrs <- data %>% select_if(is.numeric)
+factor_attrs <- data %>% select_if(is.factor)
+
+
+numeric_data <- bind_cols(numeric_attrs, Diagnosis = data$Diagnosis)
+numeric_long <- numeric_data %>%
+  pivot_longer(-Diagnosis, names_to = "variable", values_to = "value")
+numeric_densities <- ggplot(numeric_long, aes(x = value, fill = Diagnosis)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  labs(title = "Density Plots of Numeric Variables by Diagnosis",
+       x = "Value", y = "Density") +
+  theme_minimal()
+
+factor_data <- data %>%
+  select_if(is.factor)
+
+factor_data <- factor_data %>%
+  dplyr::select(-EducationLevel, -Ethnicity)
+
+factor_distributions <- factor_data %>%
+  pivot_longer(-Diagnosis, names_to = "variable", values_to = "value") %>%
+  group_by(Diagnosis, variable, value) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(Diagnosis, variable) %>%
+  mutate(percentage = count / sum(count)) %>%
+  ggplot(aes(x = value, y = percentage, fill = Diagnosis)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ variable, scales = "free_x") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Percentage Distribution by Diagnosis",
+       x = "Category", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Your predictor selection results
+predictor_selection_results <- tibble::tribble(
+  ~Variable,             ~Test,   ~Statistic, ~p_value, ~Significant,
+  "MMSE",                 "t‑test",     12.0,  0,       "Yes",
+  "FunctionalAssessment", "t‑test",     18.6,  0,       "Yes",
+  "ADL",                  "t‑test",     16.5,  0,       "Yes",
+  "MemoryComplaints",     "χ²",        201.,  0,       "Yes",
+  "BehavioralProblems",   "χ²",        107.,  0,       "Yes",
+  "SleepQuality",         "t‑test",      2.63, 0.00867, "Yes",
+  "CholesterolHDL",       "t‑test",     -1.97, 0.0490,  "Yes",
+  "Ethnicity",            "χ²",          6.30, 0.0978,  "No",
+  "Hypertension",         "χ²",          2.44, 0.118,   "No",
+  "CholesterolLDL",       "t‑test",      1.48, 0.138,   "No",
+  "Age",                  "t‑test",      1.12, 0.262,   "No",
+  "Gender",               "χ²",          0.11, 0.737,   "No",
+  "YearsOfEducation",     "t‑test",      0.88, 0.378,   "No",
+  "MaritalStatus",        "χ²",          1.56, 0.816,   "No",
+  "LivingAlone",          "χ²",          0.01, 0.920,   "No",
+  "Smoking",              "χ²",          0.23, 0.630,   "No",
+  "AlcoholConsumption",   "χ²",          1.08, 0.300,   "No",
+  "HeadInjury",           "χ²",          0.00, 0.990,   "No",
+  "Diabetes",             "χ²",          0.01, 0.910,   "No",
+  "HeartDisease",         "χ²",          0.02, 0.880,   "No",
+  "Stroke",               "χ²",          0.04, 0.840,   "No",
+  "Depression",           "χ²",          0.00, 0.960,   "No",
+  "Anxiety",              "χ²",          0.01, 0.930,   "No",
+  "ParkinsonsDisease",    "χ²",          0.00, 0.970,   "No",
+  "MultipleSclerosis",    "χ²",          0.00, 1.00,    "No",
+  "Epilepsy",             "χ²",          0.00, 1.00,    "No",
+  "Cancer",               "χ²",          0.00, 1.00,    "No",
+  "ThyroidProblems",      "χ²",          0.00, 1.00,    "No",
+  "VitaminB12Deficiency", "χ²",          0.00, 1.00,    "No",
+  "SleepApnea",           "χ²",          0.00, 1.00,    "No",
+  "Falls",                "χ²",          0.00, 1.00,    "No",
+  "FamilyHistoryAlzheimers", "χ²",          1.58, 0.209,   "No"
+)
+
+
 # Load the trained models (adjust paths if needed)
-glm_model <- readRDS("glm_model.rds")
-gbm_model <- readRDS("gbm_model.rds");
+glm_model_exp <- readRDS("glm_model.rds")
+gbm_model_exp <- readRDS("gbm_model.rds");
 
 
 # Function to make some nice tooltips
@@ -17,7 +156,7 @@ make_tooltip <- function(items) {
                      names(items),
                      unlist(items, 
                             use.names = FALSE)
-                     )
+  )
   paste(entries, collapse = "\n")
 }
 
@@ -66,82 +205,103 @@ mmse_items <- list(
 # Define UI for application
 ui <- fluidPage(
   titlePanel("Alzheimer's Disease Prediction"),
-  sidebarLayout(
-    sidebarPanel(
-      selectInput("model_type", "Select Model:",
-                  choices = c("Logistic Regression (GLM)", "Gradient Boosting Machine (GBM)")),
-      hr(), 
-      h4("Patient Data Input"),
-      h5("Hower over each for more info"),
-      numericInput("FunctionalAssessment", 
-                   label = tags$span(
-                     "FunctionalAssessment (0–10)",
-                     title = paste("Add 1 for each activity where severe assistance is needed:",
-                                   make_tooltip(fs_items),
-                                   sep = "\n\n"
-                     )
-                   ), 
-                   value = 0, min = 0, max = 10),
-      numericInput("ADL",
-                   label = tags$span(
-                                      "ADL - Activities of Daily Living (0–10)",
-                                      title = paste("Add 1 for each activity where assistance is needed:",
-                                                    make_tooltip(adl_items),
-                                                    sep = "\n\n"
-                                                   )
-                                    ), 
-                    value = 0, min = 0, max = 10),
-      tags$div(
-        title = "Has the patient or caregiver noticed any memory lapses?\n 0 = No, 1 = Yes",
-        selectInput(
-          "MemoryComplaints",
-          "Memory Complaints",
-          choices = c("0", "1")
+  tabsetPanel(type = "tabs",
+    # ——————————————————————————————
+    # Tab 1: Exploratory Data Analysis
+    tabPanel("EDA Findings",
+             h3("Exploratory Data Analysis Results"),
+             h4("Histograms of Numeric Attributes"),
+             plotOutput("numeric_densities"),
+             h4("Distributions of Categorical Attributes"),
+             plotOutput("factor_distributions"),
+             h4("Key Findings"),
+             verbatimTextOutput("eda_findings"),
+             h4("Predictor Selection"),
+             tableOutput("predictor_selection_table")
+    ),          
+              
+    tabPanel("Predictions",          
+      sidebarLayout(
+        sidebarPanel(
+          selectInput("model_type", "Select Model:",
+                      choices = c("Logistic Regression (GLM)", "Gradient Boosting Machine (GBM)")),
+          hr(), 
+          h4("Patient Data Input"),
+          h5("Hower over each for more info"),
+          numericInput("FunctionalAssessment", 
+                       label = tags$span(
+                         "FunctionalAssessment (0–10)",
+                         title = paste("Add 1 for each activity where severe assistance is needed:",
+                                       make_tooltip(fs_items),
+                                       sep = "\n\n"
+                         )
+                       ), 
+                       value = 0, min = 0, max = 10),
+          numericInput("ADL",
+                       label = tags$span(
+                         "ADL - Activities of Daily Living (0–10)",
+                         title = paste("Add 1 for each activity where assistance is needed:",
+                                       make_tooltip(adl_items),
+                                       sep = "\n\n"
+                         )
+                       ), 
+                       value = 0, min = 0, max = 10),
+          tags$div(
+            title = "Has the patient or caregiver noticed any memory lapses?\n 0 = No, 1 = Yes",
+            selectInput(
+              "MemoryComplaints",
+              "Memory Complaints",
+              choices = c("0", "1")
+            )
+          ),
+          
+          tags$div(
+            title = "Any new or worsening behavioral symptoms (agitation, apathy, etc.)?\n 0 = No, 1 = Yes",
+            selectInput(
+              "BehavioralProblems",
+              "Behavioral Problems",
+              choices = c("0", "1")
+            )
+          ),
+          numericInput("MMSE", 
+                       label = tags$span(
+                         "MSE - Mini-Mental State Exam (0–30)",
+                         title = paste("Substract 1 from 30 for each failed task:",
+                                       make_tooltip(mmse_items),
+                                       sep = "\n\n"
+                         )
+                       ), 
+                       value = 0, min = 0, max = 30),
+          numericInput("CholesterolHDL", label   = tags$span(
+            "HDL Cholesterol (mg/dL)",
+            title = "HDL (good) cholesterol helps clear plaque from your arteries. Higher for women due to effects of estrogen on lipid metabolism - process of synthesizing, breaking down, and storing fat in cells for energy storage\n\
+    Aim for ≥40 mg/dL (men) or ≥50 mg/dL (women); 60+ mg/dL is optimal."
+          ),
+          value = 20, min = 20, max = 100),
+          # We did not find any studies with index in ranges 4-10. So we decided to interpret this number as average daily sleep time from 4-10 hours.
+          numericInput("SleepQuality", 
+                       label = tags$span(
+                         "Sleep Quality (4–10)",
+                         title = "Average number of hours slept"
+                       ), 
+                       value = 4, min = 4, max = 10),
+          actionButton("predict", "Predict"),
+          hr(),
+          h4("Model Statistics"),
+          verbatimTextOutput("model_stats") # To display model statistics
+        ),
+        mainPanel(
+          h3("Prediction Results"),
+          verbatimTextOutput("prediction"),
+          conditionalPanel(
+            condition = "input.model_type == 'Gradient Boosting Machine (GBM)'",
+            h4("GBM Predictor Importance"),
+            plotOutput("gbm_importance_plot"),
+            hr(),
+            h4("ROC Curve (GBM)"),
+            plotOutput("gbm_roc_plot")
+          )
         )
-      ),
-      
-      tags$div(
-        title = "Any new or worsening behavioral symptoms (agitation, apathy, etc.)?\n 0 = No, 1 = Yes",
-        selectInput(
-          "BehavioralProblems",
-          "Behavioral Problems",
-          choices = c("0", "1")
-        )
-      ),
-      numericInput("MMSE", 
-                   label = tags$span(
-                     "MSE - Mini-Mental State Exam (0–30)",
-                     title = paste("Substract 1 from 30 for each failed task:",
-                                   make_tooltip(mmse_items),
-                                   sep = "\n\n"
-                     )
-                   ), 
-                   value = 0, min = 0, max = 30),
-      numericInput("CholesterolHDL", label   = tags$span(
-                   "HDL Cholesterol (mg/dL)",
-                   title = "HDL (good) cholesterol helps clear plaque from your arteries. Higher for women due to effects of estrogen on lipid metabolism - process of synthesizing, breaking down, and storing fat in cells for energy storage\n\
-Aim for ≥40 mg/dL (men) or ≥50 mg/dL (women); 60+ mg/dL is optimal."
-      ),
-      value = 20, min = 20, max = 100),
-      # We did not find any studies with index in ranges 4-10. So we decided to interpret this number as average daily sleep time from 4-10 hours.
-      numericInput("SleepQuality", 
-                   label = tags$span(
-                     "Sleep Quality (4–10)",
-                     title = "Average number of hours slept"
-                   ), 
-                   value = 4, min = 4, max = 10),
-      actionButton("predict", "Predict"),
-      hr(),
-      h4("Model Statistics"),
-      verbatimTextOutput("model_stats") # To display model statistics
-    ),
-    mainPanel(
-      h3("Prediction Results"),
-      verbatimTextOutput("prediction"),
-      conditionalPanel(
-        condition = "input.model_type == 'Gradient Boosting Machine (GBM)'",
-        h4("GBM Predictor Importance"),
-        plotOutput("gbm_importance_plot")
       )
     )
   )
@@ -150,70 +310,106 @@ Aim for ≥40 mg/dL (men) or ≥50 mg/dL (women); 60+ mg/dL is optimal."
 # Define server logic
 server <- function(input, output) {
   
+  # Predictions Tab
+  #-----------------------------------------------------------------------------
   # Display Model Statistics
   output$model_stats <- renderText({
     glm_info <- paste("Logistic Regression (GLM):",
-                      "\n  AIC:", round(AIC(glm_model), 2),
-                      "\n  Null Deviance:", round(glm_model$null.deviance, 2),
-                      "\n  Residual Deviance:", round(glm_model$deviance, 2))
+                      "\n  AIC:", round(AIC(glm_model_exp), 2),
+                      "\n  Null Deviance:", round(glm_model_exp$null.deviance, 2),
+                      "\n  Residual Deviance:", round(glm_model_exp$deviance, 2))
     
     gbm_info <- paste("Gradient Boosting Machine (GBM):",
-                      "\n  Optimal Trees:", gbm_model$bestTune$n.trees,
-                      "\n  AUC (Cross-Validation):", round(max(gbm_model$results$ROC), 3)) # Assuming ROC was the metric
+                      "\n  Optimal Trees:", gbm_model_exp$bestTune$n.trees,
+                      "\n  AUC (Cross-Validation):", round(max(gbm_model_exp$results$ROC), 3)) # Assuming ROC was the metric
     
     paste(glm_info, "\n\n", gbm_info)
   })
   
-  observeEvent(input$predict, {
-    selected_model_type <- input$model_type
-    
-    # Create input data frame for prediction
-    patient_data <- data.frame(
+  preds <- eventReactive(input$predict, {
+    df <- data.frame(
       FunctionalAssessment = input$FunctionalAssessment,
-      ADL = input$ADL,
-      MemoryComplaints = factor(input$MemoryComplaints, levels = c("0", "1")),
-      BehavioralProblems = factor(input$BehavioralProblems, levels = c("0", "1")),
-      MMSE = input$MMSE,
-      CholesterolHDL = input$CholesterolHDL,
-      SleepQuality = input$SleepQuality
+      ADL                  = input$ADL,
+      MemoryComplaints     = factor(input$MemoryComplaints, 
+                                    levels = c("0","1")),
+      BehavioralProblems   = factor(input$BehavioralProblems, 
+                                    levels = c("0","1")),
+      MMSE                 = input$MMSE,
+      CholesterolHDL       = input$CholesterolHDL,
+      SleepQuality         = input$SleepQuality
     )
     
-    # Make prediction based on the selected model
-    prediction_text <- ""
-    if (selected_model_type == "Logistic Regression (GLM)") {
-      pred_prob <- predict(glm_model, newdata = patient_data, type = "response")
-      optimal_threshold_glm <- 0.5
-      prediction <- ifelse(pred_prob > optimal_threshold_glm, "Alzheimer's Disease Likely", "No Alzheimer's Disease Likely")
-      prediction_text <- paste("Model:", selected_model_type, "\nPredicted Probability (AD):", round(pred_prob, 3), "\nPrediction:", prediction)
-    } else if (selected_model_type == "Gradient Boosting Machine (GBM)") {
-      pred_prob <- predict(gbm_model, newdata = patient_data, type = "response", n.trees = gbm_model$bestTune$n.trees)
-      optimal_threshold_gboost <- 0.3567714
-      prediction <- ifelse(pred_prob > optimal_threshold_gboost, "Alzheimer's Disease Likely", "No Alzheimer's Disease Likely")
-      prediction_text <- paste("Model:", selected_model_type, "\nPredicted Probability (AD):", round(pred_prob, 3), "\nPrediction:", prediction)
+    if (input$model_type == "Logistic Regression (GLM)") {
+      prob <- predict(glm_model, df, type = "prob")[, "Yes"]
+      thresh <- 0.5
+    } else {
+      prob <- predict(gbm_model, df, type = "prob")[, "Yes"]
+      thresh <- gbm_model$bestTune$someThreshold  # or your fixed value
     }
-    
-    output$prediction <- renderText({
-      prediction_text
-    })
+    list(prob = prob, class = ifelse(prob > thresh, "AD", "No AD"))
+  })
+  
+  output$prediction <- renderPrint({
+    p <- preds()
+    cat("Prob:", round(p$prob,3), "\nPrediction:", p$class)
   })
   
   # GBM Feature Importance Plot
   output$gbm_importance_plot <- renderPlot({
-    if (input$model_type == "Gradient Boosting Machine (GBM)") {
-      gbm_importance <- summary(gbm_model, plotit = FALSE)
-      importance_df <- data.frame(
-        Variable = gbm_importance$var,
-        Importance = gbm_importance$rel.inf
-      )
-      ggplot(importance_df, aes(x = reorder(Variable, Importance), y = Importance)) +
-        geom_bar(stat = "identity", fill = "lightblue") +
-        coord_flip() +
-        labs(title = "GBM Predictor Importance", x = "Predictor", y = "Relative Influence")
-    } else {
-      return(NULL) # Don't show plot if GLM is selected
-    }
+    req(input$model_type == "Gradient Boosting Machine (GBM)")
+    imp <- summary(gbm_model, plotit=FALSE)
+    df  <- data.frame(Variable = imp$var, Importance=imp$rel.inf)
+    ggplot(df, aes(reorder(Variable,Importance), Importance)) +
+      geom_col() + coord_flip() +
+      labs(title="GBM Importance")
   })
+  
+  print(names(gbm_model$pred))
+  
+  output$gbm_roc_plot <- renderPlot({
+    req(input$model_type == "Gradient Boosting Machine (GBM)")
+    # use the saved CV predictions
+    best_nt <- gbm_model$bestTune$n.trees
+    cvpreds <- gbm_model$pred[ gbm_model$pred$n.trees == best_nt, ]
+    roc_obj <- roc(cvpreds$obs, cvpreds$Yes)
+    plot(roc_obj, legacy.axes=TRUE, main="GBM CV–ROC")
+    abline(0,1,lty=2,col="grey")
+  })
+  
+  # EDA Tab
+  #-----------------------------------------------------------------------------
+  output$outcome_balance <- renderText({
+    paste("Outcome Class Counts:\n",
+          paste(names(outcome_table), outcome_table, sep = ": ", collapse = "\n"),
+          "\n\nOutcome Class Proportions:\n",
+          paste(names(outcome_prop), round(outcome_prop * 100, 2), sep = ": ", collapse = "\n"))
+  })
+  
+  output$numeric_densities <- renderPlot({
+    numeric_densities
+  })
+  
+  output$factor_distributions <- renderPlot({
+    factor_distributions
+  })
+  
+  output$eda_findings <- renderText({
+    "- Observations: 2149\n- No missing values in any column -> no imputation needed\n- Slight imbalance (65% negative, 35% positive)\n- Numeric attributes - None is normally distributed, no outlier deletion\n- No significant correlation in dataset"
+  })
+  
+  output$predictor_selection_table <- renderTable({
+    predictor_selection_results %>%
+      filter(Significant == "Yes") %>%
+      dplyr::select(Variable, Test, p_value) %>%
+      mutate(p_value = format.pval(p_value, digits = 3)) %>%
+      head(12)
+  })
+  
 }
+
+
 
 # Run the application
 shinyApp(ui = ui, server = server)
+
+
