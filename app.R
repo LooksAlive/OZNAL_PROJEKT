@@ -352,7 +352,7 @@ getConfusionOnData <- function(model, newdata, threshold = 0.5) {
 }
 
 plotConfusionGrid <- function(model, newdata, threshold = 0.5) {
-  cm_obj <- getConfusion(model, newdata, threshold)
+  cm_obj <- getConfusionOnData(model, newdata, threshold)
   df     <- as.data.frame(cm_obj$table, stringsAsFactors = FALSE)
   names(df) <- c("Prediction", "Reference", "Count")
   df$Prediction <- factor(df$Prediction, levels = c("No","Yes"))
