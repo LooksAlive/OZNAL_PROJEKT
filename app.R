@@ -31,15 +31,11 @@ data$BehavioralProblems <- factor(
 )
 
 set.seed(65778275)
-# Set up trainControl for classification + ROC + saved preds
-gbm_ctrl <- trainControl(
-  method            = "cv",            # 10-fold CV
-  number            = 10,
-  classProbs        = TRUE,            # save P(Yes), P(No)
-  summaryFunction   = twoClassSummary,
-  savePredictions   = "all",           # stash out-of-fold probs in $pred
-  verboseIter       = FALSE
-)
+train_idx  <- createDataPartition(data$Diagnosis, 
+                                  p = 0.7, 
+                                  list = FALSE)
+train_data <- data[train_idx, ]
+test_data  <- data[-train_idx, ]
 
 # Train models
 set.seed(65778275)
@@ -47,10 +43,20 @@ set.seed(65778275)
 glm_model <- train(
   Diagnosis ~ FunctionalAssessment + ADL + MemoryComplaints +
     BehavioralProblems + MMSE + CholesterolHDL + SleepQuality,
-  data     = data,
+  data     = train_data,
   method   = "glm",
   family   = binomial(),
   trControl = trainControl(method = "none")  # no CV here
+)
+
+set.seed(65778275)
+# Set up trainControl for classification + ROC + saved preds
+gbm_ctrl <- trainControl(
+  method            = "cv",            # 10-fold CV
+  number            = 10,
+  classProbs        = TRUE,            # save P(Yes), P(No)
+  summaryFunction   = twoClassSummary,
+  savePredictions   = "all",           # stash out-of-fold probs in $pred
 )
 
 # GBM (with ROC tuning & saved predictions)
@@ -58,7 +64,7 @@ set.seed(65778275)
 gbm_model <- train(
   Diagnosis ~ FunctionalAssessment + ADL + MemoryComplaints +
     BehavioralProblems + MMSE + CholesterolHDL + SleepQuality,
-  data      = data,
+  data      = train_data,
   method    = "gbm",
   metric    = "ROC",        # optimize AUC
   trControl = gbm_ctrl,
@@ -121,7 +127,7 @@ factor_distributions <- factor_data %>%
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-# Your predictor selection results
+# Predictor selection results
 predictor_selection_results <- tibble::tribble(
   ~Variable,             ~Test,   ~Statistic, ~p_value, ~Significant,
   "MMSE",                 "t‑test",     12.0,  0,       "Yes",
@@ -213,48 +219,155 @@ plotImportance <- function(model) {
 plotROC <- function(model) {
   # pull out the “Yes” probs & true obs from the cross-val preds (if available)
   if (!is.null(model$pred)) {
-    bestTuneCols <- names(model$bestTune)
-    # assume there’s only one tuning parameter for simplicity:
-    tuneName <- bestTuneCols[1]
+    tuneName <- names(model$bestTune)[1]
     bestVal  <- model$bestTune[[1]]
     preds    <- model$pred[ model$pred[[tuneName]] == bestVal, ]
-    roc_obj  <- pROC::roc(preds$obs,  preds$Yes)
+    roc_obj  <- pROC::roc(preds$obs, preds$Yes)
   } else {
-    # fallback: ROC on entire training set
-    td   <- model$trainingData
-    actual <- td$.outcome
-    X      <- td[, setdiff(names(td), ".outcome"), drop=FALSE]
+    td      <- model$trainingData
+    actual  <- td$.outcome
+    X       <- td[, setdiff(names(td), ".outcome"), drop = FALSE]
     if (model$method == "glm") {
       probs <- predict(model, X, type = "prob")[, "Yes"]
     } else if (model$method == "gbm") {
       probs <- predict(
-        model$finalModel, 
-        newdata = X, 
-        n.trees = model$bestTune$n.trees, 
+        model$finalModel,
+        newdata = X,
+        n.trees = model$bestTune$n.trees,
         type    = "response"
       )
     }
     roc_obj <- pROC::roc(actual, probs)
   }
   
-  # build a small data.frame for ggplot
+  # assemble data.frame
   roc_df <- data.frame(
     fpr = 1 - roc_obj$specificities,
-    tpr = roc_obj$sensitivities
+    tpr =    roc_obj$sensitivities
   )
   auc_val <- pROC::auc(roc_obj)
   
+  # choose color by model type
+  curve_col <- if (model$method == "glm") "royalblue" else "brown"
+  
   ggplot(roc_df, aes(x = fpr, y = tpr)) +
-    geom_line(size = 1, color = if (model$method=="glm") "royalblue" else "brown") +
-    geom_abline(linetype="dashed", color="grey") +
+    geom_line(size = 1, color = curve_col) +
+    geom_abline(linetype = "dashed", color = "gray") +
+    annotate(
+      "text",
+      x     = 0.75, y     = 0.25,
+      label = paste0("AUC = ", round(auc_val, 3)),
+      color = curve_col,
+      size  = 4
+    ) +
     labs(
-      x     = "1 - Specificity (FPR)",
-      y     = "Sensitivity (TPR)",
-      caption = paste("AUC =", round(auc_val, 3))
+      x = "False Positive Rate (1 − Specificity)",
+      y = "True Positive Rate (Sensitivity)",
+      title = if (model$method=="glm") 
+        "GLM ROC Curve" 
+      else 
+        "GBM ROC Curve"
     ) +
     theme_minimal() +
-    theme(plot.caption = element_text(hjust = 1))
+    theme(plot.title = element_text(hjust = 0.5))
 }
+
+plotROCOnData <- function(model, newdata) {
+  actual <- as.character(newdata$Diagnosis)
+  
+  # 2a) predict probabilities
+  if (model$method == "glm") {
+    probs <- predict(model$finalModel, newdata, type = "response")
+  } else if (model$method == "gbm") {
+    probs <- caret::predict.train(model, newdata, type = "prob")[, "Yes"]
+  }
+  
+  # 2b) build the ROC object
+  roc_obj <- pROC::roc(actual, probs)
+  roc_df  <- data.frame(
+    fpr = 1 - roc_obj$specificities,
+    tpr =    roc_obj$sensitivities
+  )
+  auc_val <- pROC::auc(roc_obj)
+  curve_col <- if (model$method == "glm") "royalblue" else "firebrick"
+  
+  # 2c) ggplot it with annotation
+  ggplot(roc_df, aes(x = fpr, y = tpr)) +
+    geom_line(size = 1, color = curve_col) +
+    geom_abline(lty = 2, color = "grey50") +
+    annotate("text", x = 0.75, y = 0.25,
+             label = paste0("AUC = ", round(auc_val, 3)),
+             color = curve_col, size = 4) +
+    labs(
+      x     = "False Positive Rate (1 − Specificity)",
+      y     = "True Positive Rate (Sensitivity)",
+      title = if (model$method == "glm")
+        "GLM ROC Curve (Test)"
+      else
+        "GBM ROC Curve (Test)"
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+# Function to compute & print a confusion matrix from a caret model
+getConfusion <- function(model, newdata, threshold = 0.5) {
+  actual <- as.character(newdata$Diagnosis)
+  # get P(Yes):
+  if (model$method == "glm") {
+    probs <- predict(model, newdata, type = "prob")[, "Yes"]
+  } else {
+    probs <- predict(
+      model$finalModel,
+      newdata = newdata[, setdiff(names(newdata), "Diagnosis")],
+      n.trees = model$bestTune$n.trees,
+      type    = "response"
+    )
+  }
+  pred_chr <- ifelse(probs > threshold, "Yes", "No")
+  cm_tbl    <- table(Predicted = pred_chr, Actual = actual)
+  caret::confusionMatrix(cm_tbl)
+}
+
+getConfusionOnData <- function(model, newdata, threshold = 0.5) {
+  actual <- as.character(newdata$Diagnosis)
+  
+  # 1a) get predicted P(Yes)
+  if (model$method == "glm") {
+    # use raw glm for probabilities
+    probs <- predict(model$finalModel, newdata, type = "response")
+  } else if (model$method == "gbm") {
+    # let caret handle factor encoding & prob extraction
+    probs <- caret::predict.train(model, newdata, type = "prob")[, "Yes"]
+  } else {
+    stop("Unsupported model in getConfusionOnData()")
+  }
+  
+  # 1b) threshold into classes
+  preds <- ifelse(probs > threshold, "Yes", "No")
+  
+  # 1c) build a 2×2 table and hand to caret
+  cm_tbl <- table(Predicted = preds, Actual = actual)
+  caret::confusionMatrix(cm_tbl)
+}
+
+plotConfusionGrid <- function(model, newdata, threshold = 0.5) {
+  cm_obj <- getConfusion(model, newdata, threshold)
+  df     <- as.data.frame(cm_obj$table, stringsAsFactors = FALSE)
+  names(df) <- c("Prediction", "Reference", "Count")
+  df$Prediction <- factor(df$Prediction, levels = c("No","Yes"))
+  df$Reference  <- factor(df$Reference,  levels = c("No","Yes"))
+  ggplot(df, aes(Prediction, Reference, fill = Count)) +
+    geom_tile(color="black", size=0.6) +
+    geom_text(aes(label = Count), size = 6) +
+    scale_fill_gradient(low="white", high="lightblue") +
+    labs(x="Predicted", y="Actual", title="Confusion Matrix (Test Set)") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title = element_text(hjust=0.5),
+          legend.position="none")
+}
+
+
 
 
 
@@ -417,7 +530,11 @@ ui <- fluidPage(
             plotOutput("glm_importance_plot"),
             hr(),
             h4("ROC Curve (GLM)"),
-            plotOutput("glm_roc_plot")
+            plotOutput("glm_roc_plot"),
+            hr(),
+            h4("Confusion Matrix (Training)"),
+            verbatimTextOutput("glm_confusion"),
+            plotOutput("glm_confusion_counts")
           ),
           
           conditionalPanel(
@@ -426,7 +543,11 @@ ui <- fluidPage(
             plotOutput("gbm_importance_plot"),
             hr(),
             h4("ROC Curve (GBM)"),
-            plotOutput("gbm_roc_plot")
+            plotOutput("gbm_roc_plot"),
+            hr(),
+            h4("Confusion Matrix (Training)"),
+            verbatimTextOutput("gbm_confusion"),
+            plotOutput("gbm_confusion_counts")
           )
         )
       )
@@ -441,19 +562,38 @@ server <- function(input, output) {
   #-----------------------------------------------------------------------------
   # Display Model Statistics
   output$model_stats <- renderText({
+    # — GLM metrics on training
+    glm_raw       <- glm_model$finalModel
+    glm_train_aic <- round(AIC(glm_raw), 2)
+    glm_null_dev  <- round(glm_raw$null.deviance, 2)
+    glm_resid_dev <- round(glm_raw$deviance,      2)
+    
+    # — GLM AUC on the TEST set
+    glm_probs_test <- predict(glm_model, test_data, type = "prob")[, "Yes"]
+    glm_auc_test   <- pROC::auc(test_data$Diagnosis, glm_probs_test)
+    
     glm_info <- paste(
       "Logistic Regression (GLM):",
-      "\n  AIC:", round(AIC(glm_model_exp), 2),
-      "\n  Null Deviance:", round(glm_model_exp$null.deviance, 2),
-      "\n  Residual Deviance:", round(glm_model_exp$deviance, 2))
+      sprintf("\n  AIC: %s",          glm_train_aic),
+      sprintf("\n  Null Deviance: %s", glm_null_dev),
+      sprintf("\n  Residual Deviance: %s", glm_resid_dev),
+      sprintf("\n  Test AUC: %0.3f",  as.numeric(glm_auc_test))
+    )
+    
+    # — GBM metrics (optimal trees & test AUC)
+    opt_trees      <- gbm_model$bestTune$n.trees
+    gbm_probs_test <- caret::predict.train(gbm_model, test_data, type = "prob")[, "Yes"]
+    gbm_auc_test   <- pROC::auc(test_data$Diagnosis, gbm_probs_test)
     
     gbm_info <- paste(
       "Gradient Boosting Machine (GBM):",
-      "\n  Optimal Trees:", gbm_model_exp$bestTune$n.trees,
-      "\n  AUC (Cross-Validation):", round(max(gbm_model_exp$results$ROC), 3)) # Assuming ROC was the metric
+      sprintf("\n  Optimal Trees: %d", opt_trees),
+      sprintf("\n  Test AUC: %0.3f",    as.numeric(gbm_auc_test))
+    )
     
     paste(glm_info, "\n\n", gbm_info)
   })
+  
   
   preds <- eventReactive(input$predict, {
     df <- data.frame(
@@ -487,7 +627,7 @@ server <- function(input, output) {
     cat("Prob:", round(p$prob,3), "\nPrediction:", p$class)
   })
   
-  # Feature Importance part
+  # GLM part
   output$glm_importance_plot <- renderPlot({
     req(input$model_type == "Logistic Regression (GLM)")
     plotImportance(glm_model)
@@ -496,16 +636,31 @@ server <- function(input, output) {
     req(input$model_type == "Logistic Regression (GLM)")
     plotROC(glm_model)
   })
+  output$glm_confusion <- renderPrint({
+    getConfusion(glm_model, test_data, threshold = 0.5)
+  })
+  output$glm_confusion_counts <- renderPlot({
+    plotConfusionGrid(glm_model, test_data, threshold = 0.5)
+  })
   
-  # ROC part
+  
+  # GBM part
   output$gbm_importance_plot <- renderPlot({
     req(input$model_type == "Gradient Boosting Machine (GBM)")
     plotImportance(gbm_model)
   })
   output$gbm_roc_plot <- renderPlot({
     req(input$model_type == "Gradient Boosting Machine (GBM)")
-    plotROC(gbm_model)
+    plotROCOnData(gbm_model, test_data)
   })
+  output$gbm_confusion <- renderPrint({
+    getConfusionOnData(gbm_model, test_data, threshold = 0.3567714)
+  })
+  output$gbm_confusion_counts <- renderPlot({
+    plotConfusionGrid(gbm_model, test_data, threshold = 0.3567714)
+  })
+  
+  
   
   # EDA Tab
   #-----------------------------------------------------------------------------
