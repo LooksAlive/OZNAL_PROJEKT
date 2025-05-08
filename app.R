@@ -1,3 +1,4 @@
+library(tidyverse)
 library(shiny)
 library(gbm)
 library(caret)
@@ -5,17 +6,31 @@ library(pROC)
 library(ggplot2)
 
 
+
 data_raw <- read.csv("alzheimers_disease_data.csv")
 data <- data_raw %>% dplyr::select(-DoctorInCharge, -PatientID)
 
-# assume your original column is numeric 0/1; convert to a 2-level factor:
+# turn 0/1 columns into factors before training
 data$Diagnosis <- factor(
   data$Diagnosis,
   levels = c(0, 1),
   labels = c("No", "Yes")
 )
 
-# ——— 2) Set up trainControl for classification + ROC + saved preds ———
+data$MemoryComplaints   <- factor(
+  data$MemoryComplaints,
+  levels = c(0,1),
+  labels = c("No","Yes")
+)
+
+data$BehavioralProblems <- factor(
+  data$BehavioralProblems,
+  levels = c(0,1),
+  labels = c("No","Yes")
+)
+
+set.seed(65778275)
+# Set up trainControl for classification + ROC + saved preds
 gbm_ctrl <- trainControl(
   method            = "cv",            # 10-fold CV
   number            = 10,
@@ -25,9 +40,9 @@ gbm_ctrl <- trainControl(
   verboseIter       = FALSE
 )
 
-# ——— 3) Train your models once at startup ———
-
-# 3a) GLM (no resampling)
+# Train models
+set.seed(65778275)
+# GLM (no resampling)
 glm_model <- train(
   Diagnosis ~ FunctionalAssessment + ADL + MemoryComplaints +
     BehavioralProblems + MMSE + CholesterolHDL + SleepQuality,
@@ -37,8 +52,8 @@ glm_model <- train(
   trControl = trainControl(method = "none")  # no CV here
 )
 
-# 3b) GBM (with ROC tuning & saved predictions)
-set.seed(2025)
+# GBM (with ROC tuning & saved predictions)
+set.seed(65778275)
 gbm_model <- train(
   Diagnosis ~ FunctionalAssessment + ADL + MemoryComplaints +
     BehavioralProblems + MMSE + CholesterolHDL + SleepQuality,
@@ -152,10 +167,11 @@ gbm_model_exp <- readRDS("gbm_model.rds");
 make_tooltip <- function(items) {
   # items: a named character vector or list
   # returns one string with each “name: value” on its own line
-  entries <- sprintf("%s: %s",
-                     names(items),
-                     unlist(items, 
-                            use.names = FALSE)
+  entries <- sprintf(
+    "%s: %s",
+    names(items),
+    unlist(items, 
+    use.names = FALSE)
   )
   paste(entries, collapse = "\n")
 }
@@ -208,83 +224,101 @@ ui <- fluidPage(
   tabsetPanel(type = "tabs",
     # ——————————————————————————————
     # Tab 1: Exploratory Data Analysis
-    tabPanel("EDA Findings",
-             h3("Exploratory Data Analysis Results"),
-             h4("Histograms of Numeric Attributes"),
-             plotOutput("numeric_densities"),
-             h4("Distributions of Categorical Attributes"),
-             plotOutput("factor_distributions"),
-             h4("Key Findings"),
-             verbatimTextOutput("eda_findings"),
-             h4("Predictor Selection"),
-             tableOutput("predictor_selection_table")
+    tabPanel(
+      "EDA Findings",
+      h3("Exploratory Data Analysis Results"),
+      h4("Histograms of Numeric Attributes"),
+      plotOutput("numeric_densities"),
+      h4("Distributions of Categorical Attributes"),
+      plotOutput("factor_distributions"),
+      h4("Key Findings"),
+      verbatimTextOutput("eda_findings"),
+      h4("Predictor Selection"),
+      tableOutput("predictor_selection_table")
     ),          
               
     tabPanel("Predictions",          
       sidebarLayout(
         sidebarPanel(
-          selectInput("model_type", "Select Model:",
-                      choices = c("Logistic Regression (GLM)", "Gradient Boosting Machine (GBM)")),
+          selectInput(
+            "model_type", "Select Model:",
+            choices = c(
+              "Logistic Regression (GLM)", 
+              "Gradient Boosting Machine (GBM)")
+            ),
           hr(), 
           h4("Patient Data Input"),
           h5("Hower over each for more info"),
-          numericInput("FunctionalAssessment", 
-                       label = tags$span(
-                         "FunctionalAssessment (0–10)",
-                         title = paste("Add 1 for each activity where severe assistance is needed:",
-                                       make_tooltip(fs_items),
-                                       sep = "\n\n"
-                         )
-                       ), 
-                       value = 0, min = 0, max = 10),
-          numericInput("ADL",
-                       label = tags$span(
-                         "ADL - Activities of Daily Living (0–10)",
-                         title = paste("Add 1 for each activity where assistance is needed:",
-                                       make_tooltip(adl_items),
-                                       sep = "\n\n"
-                         )
-                       ), 
-                       value = 0, min = 0, max = 10),
+          numericInput(
+            "FunctionalAssessment", 
+            label = tags$span(
+              "FunctionalAssessment (0–10)",
+              title = paste(
+                "Add 1 for each activity where severe assistance is needed:",
+                make_tooltip(fs_items),
+                sep = "\n\n"
+              )
+            ), 
+            value = 0, min = 0, max = 10
+          ),
+          numericInput(
+            "ADL",
+            label = tags$span(
+              "ADL - Activities of Daily Living (0–10)",
+              title = paste(
+                "Add 1 for each activity where assistance is needed:",
+                make_tooltip(adl_items),
+                sep = "\n\n"
+              )
+            ), 
+            value = 0, min = 0, max = 10
+          ),
           tags$div(
-            title = "Has the patient or caregiver noticed any memory lapses?\n 0 = No, 1 = Yes",
+            title = "Has the patient or caregiver noticed any memory lapses?",
             selectInput(
               "MemoryComplaints",
               "Memory Complaints",
-              choices = c("0", "1")
+              choices = c("No", "Yes")
             )
           ),
           
           tags$div(
-            title = "Any new or worsening behavioral symptoms (agitation, apathy, etc.)?\n 0 = No, 1 = Yes",
+            title = "Any new or worsening behavioral symptoms (agitation, apathy, etc.)?",
             selectInput(
               "BehavioralProblems",
               "Behavioral Problems",
-              choices = c("0", "1")
+              choices = c("No", "Yes")
             )
           ),
-          numericInput("MMSE", 
-                       label = tags$span(
-                         "MSE - Mini-Mental State Exam (0–30)",
-                         title = paste("Substract 1 from 30 for each failed task:",
-                                       make_tooltip(mmse_items),
-                                       sep = "\n\n"
-                         )
-                       ), 
-                       value = 0, min = 0, max = 30),
-          numericInput("CholesterolHDL", label   = tags$span(
-            "HDL Cholesterol (mg/dL)",
-            title = "HDL (good) cholesterol helps clear plaque from your arteries. Higher for women due to effects of estrogen on lipid metabolism - process of synthesizing, breaking down, and storing fat in cells for energy storage\n\
-    Aim for ≥40 mg/dL (men) or ≥50 mg/dL (women); 60+ mg/dL is optimal."
+          numericInput(
+            "MMSE", 
+            label = tags$span(
+              "MSE - Mini-Mental State Exam (0–30)",
+              title = paste("Substract 1 from 30 for each failed task:",
+              make_tooltip(mmse_items),
+              sep = "\n\n"
+              )
+            ), 
+            value = 0, min = 0, max = 30
           ),
-          value = 20, min = 20, max = 100),
+          numericInput(
+            "CholesterolHDL", 
+            label   = tags$span(
+              "HDL Cholesterol (mg/dL)",
+              title = "HDL (good) cholesterol helps clear plaque from your arteries. Higher for women due to effects of estrogen on lipid metabolism - process of synthesizing, breaking down, and storing fat in cells for energy storage\n\
+    Aim for ≥40 mg/dL (men) or ≥50 mg/dL (women); 60+ mg/dL is optimal."
+            ),
+            value = 20, min = 20, max = 100
+          ),
           # We did not find any studies with index in ranges 4-10. So we decided to interpret this number as average daily sleep time from 4-10 hours.
-          numericInput("SleepQuality", 
-                       label = tags$span(
-                         "Sleep Quality (4–10)",
-                         title = "Average number of hours slept"
-                       ), 
-                       value = 4, min = 4, max = 10),
+          numericInput(
+            "SleepQuality", 
+            label = tags$span(
+              "Sleep Quality (4–10)",
+              title = "Average number of hours slept"
+            ), 
+            value = 4, min = 4, max = 10
+          ),
           actionButton("predict", "Predict"),
           hr(),
           h4("Model Statistics"),
@@ -314,14 +348,16 @@ server <- function(input, output) {
   #-----------------------------------------------------------------------------
   # Display Model Statistics
   output$model_stats <- renderText({
-    glm_info <- paste("Logistic Regression (GLM):",
-                      "\n  AIC:", round(AIC(glm_model_exp), 2),
-                      "\n  Null Deviance:", round(glm_model_exp$null.deviance, 2),
-                      "\n  Residual Deviance:", round(glm_model_exp$deviance, 2))
+    glm_info <- paste(
+      "Logistic Regression (GLM):",
+      "\n  AIC:", round(AIC(glm_model_exp), 2),
+      "\n  Null Deviance:", round(glm_model_exp$null.deviance, 2),
+      "\n  Residual Deviance:", round(glm_model_exp$deviance, 2))
     
-    gbm_info <- paste("Gradient Boosting Machine (GBM):",
-                      "\n  Optimal Trees:", gbm_model_exp$bestTune$n.trees,
-                      "\n  AUC (Cross-Validation):", round(max(gbm_model_exp$results$ROC), 3)) # Assuming ROC was the metric
+    gbm_info <- paste(
+      "Gradient Boosting Machine (GBM):",
+      "\n  Optimal Trees:", gbm_model_exp$bestTune$n.trees,
+      "\n  AUC (Cross-Validation):", round(max(gbm_model_exp$results$ROC), 3)) # Assuming ROC was the metric
     
     paste(glm_info, "\n\n", gbm_info)
   })
@@ -329,14 +365,18 @@ server <- function(input, output) {
   preds <- eventReactive(input$predict, {
     df <- data.frame(
       FunctionalAssessment = input$FunctionalAssessment,
-      ADL                  = input$ADL,
-      MemoryComplaints     = factor(input$MemoryComplaints, 
-                                    levels = c("0","1")),
-      BehavioralProblems   = factor(input$BehavioralProblems, 
-                                    levels = c("0","1")),
-      MMSE                 = input$MMSE,
-      CholesterolHDL       = input$CholesterolHDL,
-      SleepQuality         = input$SleepQuality
+      ADL = input$ADL,
+      MemoryComplaints = factor(
+        input$MemoryComplaints, 
+        levels = c("No","Yes")
+      ),
+      BehavioralProblems = factor(
+        input$BehavioralProblems, 
+        levels = c("No","Yes")
+      ),
+      MMSE = input$MMSE,
+      CholesterolHDL = input$CholesterolHDL,
+      SleepQuality = input$SleepQuality
     )
     
     if (input$model_type == "Logistic Regression (GLM)") {
@@ -344,7 +384,7 @@ server <- function(input, output) {
       thresh <- 0.5
     } else {
       prob <- predict(gbm_model, df, type = "prob")[, "Yes"]
-      thresh <- gbm_model$bestTune$someThreshold  # or your fixed value
+      thresh <- 0.3567714 
     }
     list(prob = prob, class = ifelse(prob > thresh, "AD", "No AD"))
   })
@@ -379,10 +419,16 @@ server <- function(input, output) {
   # EDA Tab
   #-----------------------------------------------------------------------------
   output$outcome_balance <- renderText({
-    paste("Outcome Class Counts:\n",
-          paste(names(outcome_table), outcome_table, sep = ": ", collapse = "\n"),
-          "\n\nOutcome Class Proportions:\n",
-          paste(names(outcome_prop), round(outcome_prop * 100, 2), sep = ": ", collapse = "\n"))
+    paste(
+      "Outcome Class Counts:\n",
+      paste(names(outcome_table), outcome_table, sep = ": ", collapse = "\n"),
+      "\n\nOutcome Class Proportions:\n",
+      paste(
+        names(outcome_prop), 
+        round(outcome_prop * 100, 2), 
+        sep = ": ", 
+        collapse = "\n")
+    )
   })
   
   output$numeric_densities <- renderPlot({
