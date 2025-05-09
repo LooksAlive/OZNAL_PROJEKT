@@ -498,7 +498,6 @@ ui <- fluidPage(
             ),
           hr(), 
           h4("Patient Data Input"),
-          h5("Hower over each for more info"),
           numericInput(
             "FunctionalAssessment", 
             label = tags$span(
@@ -631,26 +630,20 @@ server <- function(input, output) {
     
     glm_info <- paste(
       "Logistic Regression (GLM):",
-      sprintf("\n  AIC: %s",          glm_train_aic),
-      sprintf("\n  Null Deviance: %s", glm_null_dev),
-      sprintf("\n  Residual Deviance: %s", glm_resid_dev)
+      paste("\n  AIC:", glm_train_aic),
+      paste("\n  Null Deviance:", glm_null_dev),
+      paste("\n  Residual Deviance:", glm_resid_dev)
     )
-    
-    # — GBM metrics (optimal trees & test AUC)
-    opt_trees      <- gbm_model$bestTune$n.trees
-    
-    # pull out only the preds for the chosen tuning parameter
-    tune_names <- names(gbm_model$bestTune)
-    is_best    <- Reduce(`&`, lapply(tune_names, function(nm) {
-      gbm_model$pred[[nm]] == gbm_model$bestTune[[nm]]
-    }))
-    cv_preds   <- gbm_model$pred[is_best, ]
     
     
     gbm_info <- paste(
       "Gradient Boosting Machine (GBM):",
-      #printf("\n  Optimal Trees: %d", opt_trees),
-      sprintf("\n  CV AUC:  %0.3f", cv_auc)
+      paste("\n  CV AUC:", sprintf("%0.3f", cv_auc)),
+      "\n Parameters:",
+      paste("\n  Optimal Trees:", 400),
+      paste("\n  Interaction Depth:", 5),
+      paste("\n  Shrinkage:", sprintf("%f", 0.1)),
+      paste("\n  Min. Node Size:", 10)
     )
     
     paste(glm_info, "\n\n", gbm_info)
@@ -793,7 +786,7 @@ server <- function(input, output) {
   })
   
   output$eda_findings <- renderText({
-    "- Observations: 2149\n- No missing values in any attribute\n- Dataset imbalance (65% negative, 35% positive)\n- Attributes are not normally distributed\n - No outlier, no duplicates\n- No significant correlation"
+    "- Observations: 2149\n- No missing values in any attribute\n- Dataset imbalance (65% negative, 35% positive)\n- Attributes are not normally distributed\n- No outlier, no duplicates\n- No significant correlation"
   })
   
   output$numeric_densities <- renderPlot({
