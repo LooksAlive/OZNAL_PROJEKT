@@ -667,7 +667,7 @@ cat("No Information Rate:", no_information_rate, "\n")
 
 
 
-#'# Second Model - XBoost (GBM)
+#'# Second Model - GBoost (GBM)
 
 #' main article:
 #'@article{article,
@@ -871,6 +871,23 @@ print(conf_matrix_nb)
 
 
 
+
+
+
+
+
+predicted_probabilities <- predict(model_primary, newdata = train_data, type = "response")
+fitted_data <- data.frame(probability = predicted_probabilities, actual = train_data$Diagnosis)
+
+ggplot(fitted_data, aes(x = probability, y = as.numeric(actual) - 1)) + # Subtract 1 to get 0/1
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "loess", color = "red") +
+  labs(
+    title = "Predicted Probabilities vs. Actual Diagnosis",
+    x = "Predicted Probability of Diagnosis",
+    y = "Actual Diagnosis (0 = No, 1 = Yes)"
+  ) +
+  theme_bw()
 
 
 

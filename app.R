@@ -130,7 +130,7 @@ numeric_long <- numeric_data %>%
 numeric_densities <- ggplot(numeric_long, aes(x = value, fill = Diagnosis)) +
   geom_density(alpha = 0.5) +
   facet_wrap(~ variable, scales = "free", ncol = 3) +
-  labs(title = "Density Plots of Numeric Variables by Diagnosis",
+  labs(title = "",
        x = "Value", y = "Density") +
   theme_minimal()
 
@@ -140,7 +140,14 @@ factor_data <- data %>%
 factor_data <- factor_data %>%
   dplyr::select(-EducationLevel, -Ethnicity)
 
-factor_distributions <- factor_data %>%
+factor_data1 <- factor_data
+
+factor_data1$MemoryComplaints <- factor(ifelse(factor_data1$MemoryComplaints == "Yes", 1, 0),
+                                  levels = c(0,1))
+factor_data1$BehavioralProblems <- factor(ifelse(factor_data1$BehavioralProblems == "Yes", 1, 0),
+                                       levels = c(0,1))
+
+factor_distributions <- factor_data1 %>%
   pivot_longer(-Diagnosis, names_to = "variable", values_to = "value") %>%
   group_by(Diagnosis, variable, value) %>%
   summarise(count = n(), .groups = "drop") %>%
@@ -150,10 +157,12 @@ factor_distributions <- factor_data %>%
   geom_bar(stat = "identity", position = "dodge") +
   facet_wrap(~ variable, scales = "free_x") +
   scale_y_continuous(labels = percent_format()) +
-  labs(title = "Percentage Distribution by Diagnosis",
-       x = "Category", y = "Percentage") +
+  labs(title = "",
+       x = "Diagnosis", y = "Percentage") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
 
 # Predictor selection results
 predictor_selection_results <- tibble::tribble(
@@ -466,13 +475,14 @@ ui <- fluidPage(
     # Tab 1: Exploratory Data Analysis
     tabPanel(
       "EDA Findings",
+      h4("Key Findings"),
+      verbatimTextOutput("eda_findings"),
       h3("Exploratory Data Analysis Results"),
-      h4("Histograms of Numeric Attributes"),
+      h4("Density Plots of Numeric Attributres"),
       plotOutput("numeric_densities"),
       h4("Distributions of Categorical Attributes"),
       plotOutput("factor_distributions"),
-      h4("Key Findings"),
-      verbatimTextOutput("eda_findings"),
+      
       h4("Predictor Selection"),
       tableOutput("predictor_selection_table")
     ),          
@@ -782,6 +792,10 @@ server <- function(input, output) {
     )
   })
   
+  output$eda_findings <- renderText({
+    "- Observations: 2149\n- No missing values in any attribute\n- Dataset imbalance (65% negative, 35% positive)\n- Attributes are not normally distributed\n - No outlier, no duplicates\n- No significant correlation"
+  })
+  
   output$numeric_densities <- renderPlot({
     numeric_densities
   })
@@ -790,9 +804,7 @@ server <- function(input, output) {
     factor_distributions
   })
   
-  output$eda_findings <- renderText({
-    "- Observations: 2149\n- No missing values in any column -> no imputation needed\n- Slight imbalance (65% negative, 35% positive)\n- Numeric attributes - None is normally distributed, no outlier deletion\n- No significant correlation in dataset"
-  })
+  
   
   output$predictor_selection_table <- renderTable({
     predictor_selection_results %>%
