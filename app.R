@@ -573,7 +573,8 @@ ui <- fluidPage(
         ),
         mainPanel(
           h3("Prediction Results"),
-          verbatimTextOutput("prediction"),
+          uiOutput("prediction_ui"),
+          #verbatimTextOutput("prediction"),
           conditionalPanel(
             condition = "input.model_type == 'Logistic Regression (GLM)'",
             #h4("GLM Predictor Importance"),
@@ -638,7 +639,7 @@ server <- function(input, output) {
     
     gbm_info <- paste(
       "Gradient Boosting Machine (GBM):",
-      sprintf("\n  Optimal Trees: %d", opt_trees),
+      #printf("\n  Optimal Trees: %d", opt_trees),
       sprintf("\n  CV AUC:  %0.3f", cv_auc)
     )
     
@@ -673,10 +674,38 @@ server <- function(input, output) {
     list(prob = prob, class = ifelse(prob > thresh, "AD", "No AD"))
   })
   
-  output$prediction <- renderPrint({
+  #output$prediction <- renderPrint({
+  #  p <- preds()
+  #  cat("Prob:", round(p$prob,3), "\nPrediction:", p$class)
+  #})
+  output$prediction_ui <- renderUI({
     p <- preds()
-    cat("Prob:", round(p$prob,3), "\nPrediction:", p$class)
+    # choose colors by class
+    bg   <- if (p$class=="AD") "#f8d7da" else "#d4edda"
+    bc   <- if (p$class=="AD") "#f5c6cb" else "#c3e6cb"
+    fg   <- if (p$class=="AD") "#721c24" else "#155724"
+    
+    div(
+      style = paste0(
+        "background:", bg, ";",
+        "border:2px solid ", bc, ";",
+        "color:", fg, ";",
+        "border-radius:8px;",
+        "padding:12px;",
+        "max-width:300px;"
+      ),
+      tags$h4("Result", style="margin-top:0; margin-bottom:8px;"),
+      tags$p(
+        strong("Probability of AD: "),
+        span(sprintf("%.3f", p$prob), style="font-size:1.2em;")
+      ),
+      tags$p(
+        strong("Prediction: "),
+        span(p$class, style="font-size:1.2em; text-transform:uppercase;")
+      )
+    )
   })
+  
   
   # GLM part
   #output$glm_importance_plot <- renderPlot({
