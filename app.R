@@ -582,7 +582,7 @@ ui <- fluidPage(
             h4("ROC Curve (GLM)"),
             plotOutput("glm_roc_plot"),
             hr(),
-            h4("Confusion Matrix (Training)"),
+            h4("Confusion Matrix"),
             #verbatimTextOutput("glm_confusion"),
             plotOutput("glm_confusion_counts")
           ),
@@ -595,7 +595,7 @@ ui <- fluidPage(
             h4("ROC Curve (GBM)"),
             plotOutput("gbm_roc_plot"),
             hr(),
-            h4("Confusion Matrix (Training)"),
+            h4("Confusion Matrix"),
             #verbatimTextOutput("gbm_confusion"),
             plotOutput("gbm_confusion_counts")
           )
