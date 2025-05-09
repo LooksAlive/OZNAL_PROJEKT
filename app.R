@@ -5,6 +5,22 @@ library(caret)
 library(pROC)
 library(ggplot2)
 library(scales)
+library(ggtext)
+
+
+
+predictors <- c(
+  "FunctionalAssessment",
+  "ADL",
+  "MemoryComplaints",
+  "BehavioralProblems",
+  "MMSE",
+  "CholesterolHDL",
+  "SleepQuality"
+)
+
+# a rainbow of the same length, named by predictor
+pal_global <- setNames(rainbow(length(predictors)), predictors)
 
 
 
@@ -56,7 +72,7 @@ gbm_ctrl <- trainControl(
   number            = 10,
   classProbs        = TRUE,            # save P(Yes), P(No)
   summaryFunction   = twoClassSummary,
-  savePredictions   = "all",           # stash out-of-fold probs in $pred
+  savePredictions = "final"
 )
 
 # GBM (with ROC tuning & saved predictions)
@@ -66,10 +82,22 @@ gbm_model <- train(
     BehavioralProblems + MMSE + CholesterolHDL + SleepQuality,
   data      = train_data,
   method    = "gbm",
-  metric    = "ROC",        # optimize AUC
+  metric    = "ROC",
   trControl = gbm_ctrl,
   verbose   = FALSE
 )
+
+best  <- gbm_model$bestTune
+# subset 'results' to the row that matches your bestTune
+cv_auc <- gbm_model$results %>%
+  dplyr::filter(
+    n.trees          == best$n.trees,
+    interaction.depth== best$interaction.depth,
+    shrinkage        == best$shrinkage,
+    n.minobsinnode   == best$n.minobsinnode
+  ) %>%
+  pull(ROC) %>%
+  round(3)
 
 
 # EDA
@@ -190,29 +218,50 @@ make_tooltip <- function(items) {
 
 # Function for variable‐importance plot for any caret::train model
 plotImportance <- function(model) {
-  # produce a data.frame of (Variable, Importance)
+  # 1) build the raw df
   if (model$method == "glm") {
-    # for glm, use absolute value of the coefficients
     coefs <- coef(model$finalModel)
     df    <- data.frame(
       Variable   = names(coefs)[-1],
-      Importance = abs(as.numeric(coefs[-1]))
+      Importance = abs(as.numeric(coefs[-1])),
+      stringsAsFactors = FALSE
     )
   } else if (model$method == "gbm") {
-    imp   <- summary(model, plotit=FALSE)
-    df     <- data.frame(
-      Variable   = imp$var,
-      Importance = imp$rel.inf
+    imp <- summary(model, plotit = FALSE)
+    df  <- data.frame(
+      Variable   = imp$var,       # e.g. "MemoryComplaintsYes"
+      Importance = imp$rel.inf,
+      stringsAsFactors = FALSE
     )
-  } else stop("Unsupported model for plotImportance")
+  } else {
+    stop("Unsupported model for plotImportance")
+  }
   
-  ggplot(df, aes(x = reorder(Variable, Importance), y = Importance, fill = Variable)) +
+  # 2) strip off any trailing "Yes"/"No" so we get the base var
+  df$BaseVar <- sub("(Yes|No)$", "", df$Variable)
+  
+  # 3) plot – fill by BaseVar, using our global palette
+  ggplot(df, aes(
+    x    = reorder(Variable, Importance),
+    y    = Importance,
+    fill = BaseVar
+  )) +
     geom_col() +
     coord_flip() +
-    scale_fill_manual(values = rainbow(nrow(df))) +
-    labs(x = "Predictor", y = "Importance") +
-    theme_minimal() +
-    theme(legend.position = "none")
+    scale_fill_manual(
+      values = pal_global,
+      guide  = "none"
+    ) +
+    labs(
+      title = if (model$method=="glm")
+        "GLM Predictor Importance"
+      else
+        "GBM Predictor Importance",
+      x = "Predictor",
+      y = "Importance"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5))
 }
 
 # Function for ROC‐curve plot for any caret::train model with saved preds
@@ -332,16 +381,10 @@ getConfusion <- function(model, newdata, threshold = 0.5) {
 getConfusionOnData <- function(model, newdata, threshold = 0.5) {
   actual <- as.character(newdata$Diagnosis)
   
-  # 1a) get predicted P(Yes)
-  if (model$method == "glm") {
-    # use raw glm for probabilities
-    probs <- predict(model$finalModel, newdata, type = "response")
-  } else if (model$method == "gbm") {
-    # let caret handle factor encoding & prob extraction
-    probs <- caret::predict.train(model, newdata, type = "prob")[, "Yes"]
-  } else {
-    stop("Unsupported model in getConfusionOnData()")
-  }
+  # strip off the outcome column before predicting
+  df <- newdata[, setdiff(names(newdata), "Diagnosis")]
+  # get predicted P(Yes) for *any* caret model
+  probs <- caret::predict.train(model, df, type = "prob")[, "Yes"]
   
   # 1b) threshold into classes
   preds <- ifelse(probs > threshold, "Yes", "No")
@@ -449,6 +492,7 @@ ui <- fluidPage(
           numericInput(
             "FunctionalAssessment", 
             label = tags$span(
+              style = paste("color:", pal_global["FunctionalAssessment"], "; font-weight:bold;"),
               "FunctionalAssessment (0–10)",
               title = paste(
                 "Add 1 for each activity where severe assistance is needed:",
@@ -461,6 +505,7 @@ ui <- fluidPage(
           numericInput(
             "ADL",
             label = tags$span(
+              style = paste("color:", pal_global["ADL"], "; font-weight:bold;"),
               "ADL - Activities of Daily Living (0–10)",
               title = paste(
                 "Add 1 for each activity where assistance is needed:",
@@ -471,6 +516,7 @@ ui <- fluidPage(
             value = 0, min = 0, max = 10
           ),
           tags$div(
+            style = paste("color:", pal_global["MemoryComplaints"], "; font-weight:bold;"),
             title = "Has the patient or caregiver noticed any memory lapses?",
             selectInput(
               "MemoryComplaints",
@@ -480,6 +526,7 @@ ui <- fluidPage(
           ),
           
           tags$div(
+            style = paste("color:", pal_global["BehavioralProblems"], "; font-weight:bold;"),
             title = "Any new or worsening behavioral symptoms (agitation, apathy, etc.)?",
             selectInput(
               "BehavioralProblems",
@@ -490,6 +537,7 @@ ui <- fluidPage(
           numericInput(
             "MMSE", 
             label = tags$span(
+              style = paste("color:", pal_global["MMSE"], "; font-weight:bold;"),
               "MSE - Mini-Mental State Exam (0–30)",
               title = paste("Substract 1 from 30 for each failed task:",
               make_tooltip(mmse_items),
@@ -501,6 +549,7 @@ ui <- fluidPage(
           numericInput(
             "CholesterolHDL", 
             label   = tags$span(
+              style = paste("color:", pal_global["CholesterolHDL"], "; font-weight:bold;"),
               "HDL Cholesterol (mg/dL)",
               title = "HDL (good) cholesterol helps clear plaque from your arteries. Higher for women due to effects of estrogen on lipid metabolism - process of synthesizing, breaking down, and storing fat in cells for energy storage\n\
     Aim for ≥40 mg/dL (men) or ≥50 mg/dL (women); 60+ mg/dL is optimal."
@@ -511,6 +560,7 @@ ui <- fluidPage(
           numericInput(
             "SleepQuality", 
             label = tags$span(
+              style = paste("color:", pal_global["SleepQuality"], "; font-weight:bold;"),
               "Sleep Quality (4–10)",
               title = "Average number of hours slept"
             ), 
@@ -526,14 +576,14 @@ ui <- fluidPage(
           verbatimTextOutput("prediction"),
           conditionalPanel(
             condition = "input.model_type == 'Logistic Regression (GLM)'",
-            h4("GLM Predictor Importance"),
-            plotOutput("glm_importance_plot"),
-            hr(),
+            #h4("GLM Predictor Importance"),
+            #plotOutput("glm_importance_plot"),
+            #hr(),
             h4("ROC Curve (GLM)"),
             plotOutput("glm_roc_plot"),
             hr(),
             h4("Confusion Matrix (Training)"),
-            verbatimTextOutput("glm_confusion"),
+            #verbatimTextOutput("glm_confusion"),
             plotOutput("glm_confusion_counts")
           ),
           
@@ -546,7 +596,7 @@ ui <- fluidPage(
             plotOutput("gbm_roc_plot"),
             hr(),
             h4("Confusion Matrix (Training)"),
-            verbatimTextOutput("gbm_confusion"),
+            #verbatimTextOutput("gbm_confusion"),
             plotOutput("gbm_confusion_counts")
           )
         )
@@ -566,29 +616,30 @@ server <- function(input, output) {
     glm_raw       <- glm_model$finalModel
     glm_train_aic <- round(AIC(glm_raw), 2)
     glm_null_dev  <- round(glm_raw$null.deviance, 2)
-    glm_resid_dev <- round(glm_raw$deviance,      2)
-    
-    # — GLM AUC on the TEST set
-    glm_probs_test <- predict(glm_model, test_data, type = "prob")[, "Yes"]
-    glm_auc_test   <- pROC::auc(test_data$Diagnosis, glm_probs_test)
+    glm_resid_dev <- round(glm_raw$deviance, 2)
     
     glm_info <- paste(
       "Logistic Regression (GLM):",
       sprintf("\n  AIC: %s",          glm_train_aic),
       sprintf("\n  Null Deviance: %s", glm_null_dev),
-      sprintf("\n  Residual Deviance: %s", glm_resid_dev),
-      sprintf("\n  Test AUC: %0.3f",  as.numeric(glm_auc_test))
+      sprintf("\n  Residual Deviance: %s", glm_resid_dev)
     )
     
     # — GBM metrics (optimal trees & test AUC)
     opt_trees      <- gbm_model$bestTune$n.trees
-    gbm_probs_test <- caret::predict.train(gbm_model, test_data, type = "prob")[, "Yes"]
-    gbm_auc_test   <- pROC::auc(test_data$Diagnosis, gbm_probs_test)
+    
+    # pull out only the preds for the chosen tuning parameter
+    tune_names <- names(gbm_model$bestTune)
+    is_best    <- Reduce(`&`, lapply(tune_names, function(nm) {
+      gbm_model$pred[[nm]] == gbm_model$bestTune[[nm]]
+    }))
+    cv_preds   <- gbm_model$pred[is_best, ]
+    
     
     gbm_info <- paste(
       "Gradient Boosting Machine (GBM):",
       sprintf("\n  Optimal Trees: %d", opt_trees),
-      sprintf("\n  Test AUC: %0.3f",    as.numeric(gbm_auc_test))
+      sprintf("\n  CV AUC:  %0.3f", cv_auc)
     )
     
     paste(glm_info, "\n\n", gbm_info)
@@ -628,17 +679,17 @@ server <- function(input, output) {
   })
   
   # GLM part
-  output$glm_importance_plot <- renderPlot({
-    req(input$model_type == "Logistic Regression (GLM)")
-    plotImportance(glm_model)
-  })
+  #output$glm_importance_plot <- renderPlot({
+  #  req(input$model_type == "Logistic Regression (GLM)")
+  #  plotImportance(glm_model)
+  #})
   output$glm_roc_plot <- renderPlot({
     req(input$model_type == "Logistic Regression (GLM)")
     plotROC(glm_model)
   })
-  output$glm_confusion <- renderPrint({
-    getConfusion(glm_model, test_data, threshold = 0.5)
-  })
+  #output$glm_confusion <- renderPrint({
+  #  getConfusion(glm_model, test_data, threshold = 0.5)
+  #})
   output$glm_confusion_counts <- renderPlot({
     plotConfusionGrid(glm_model, test_data, threshold = 0.5)
   })
@@ -653,9 +704,9 @@ server <- function(input, output) {
     req(input$model_type == "Gradient Boosting Machine (GBM)")
     plotROCOnData(gbm_model, test_data)
   })
-  output$gbm_confusion <- renderPrint({
-    getConfusionOnData(gbm_model, test_data, threshold = 0.3567714)
-  })
+  #output$gbm_confusion <- renderPrint({
+  #  getConfusionOnData(gbm_model, test_data, threshold = 0.3567714)
+  #})
   output$gbm_confusion_counts <- renderPlot({
     plotConfusionGrid(gbm_model, test_data, threshold = 0.3567714)
   })
