@@ -548,7 +548,7 @@ ui <- fluidPage(
             "MMSE", 
             label = tags$span(
               style = paste("color:", pal_global["MMSE"], "; font-weight:bold;"),
-              "MSE - Mini-Mental State Exam (0–30)",
+              "MMSE - Mini-Mental State Exam (0–30)",
               title = paste("Substract 1 from 30 for each failed task:",
               make_tooltip(mmse_items),
               sep = "\n\n"
