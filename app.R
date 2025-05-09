@@ -678,12 +678,42 @@ server <- function(input, output) {
   #  p <- preds()
   #  cat("Prob:", round(p$prob,3), "\nPrediction:", p$class)
   #})
+  rv <- reactiveValues(pred = NULL)
+  
+  # when they click “Predict” write into rv$pred
+  observeEvent(input$predict, {
+    df <- data.frame(
+      FunctionalAssessment = input$FunctionalAssessment,
+      ADL                   = input$ADL,
+      MemoryComplaints      = factor(input$MemoryComplaints, levels = c("No","Yes")),
+      BehavioralProblems    = factor(input$BehavioralProblems, levels = c("No","Yes")),
+      MMSE                  = input$MMSE,
+      CholesterolHDL        = input$CholesterolHDL,
+      SleepQuality          = input$SleepQuality
+    )
+    if (input$model_type == "Logistic Regression (GLM)") {
+      prob  <- predict(glm_model, df, type = "prob")[, "Yes"]
+      clazz <- ifelse(prob > 0.5, "AD", "No AD")
+    } else {
+      prob  <- predict(gbm_model, df, type = "prob")[, "Yes"]
+      clazz <- ifelse(prob > 0.3567714, "AD", "No AD")
+    }
+    rv$pred <- list(prob = prob, class = clazz)
+  })
+  
+  # whenever they switch models, clear out that old rv$pred
+  observeEvent(input$model_type, {
+    rv$pred <- NULL
+  })
+  
+  # renderUI only if rv$pred is non-NULL
   output$prediction_ui <- renderUI({
-    p <- preds()
-    # choose colors by class
-    bg   <- if (p$class=="AD") "#f8d7da" else "#d4edda"
-    bc   <- if (p$class=="AD") "#f5c6cb" else "#c3e6cb"
-    fg   <- if (p$class=="AD") "#721c24" else "#155724"
+    req(rv$pred)
+    p <- rv$pred
+    
+    bg <- if (p$class=="AD") "#f8d7da" else "#d4edda"
+    bc <- if (p$class=="AD") "#f5c6cb" else "#c3e6cb"
+    fg <- if (p$class=="AD") "#721c24" else "#155724"
     
     div(
       style = paste0(
@@ -695,13 +725,8 @@ server <- function(input, output) {
         "max-width:300px;"
       ),
       tags$h4("Result", style="margin-top:0; margin-bottom:8px;"),
-      tags$p(
-        strong("Probability of AD: "),
-        span(sprintf("%.3f", p$prob), style="font-size:1.2em;")
-      ),
-      tags$p(
-        strong("Prediction: "),
-        span(p$class, style="font-size:1.2em; text-transform:uppercase;")
+      tags$p(strong("Probability of AD: "), span(sprintf("%.3f", p$prob), style="font-size:1.2em;")),
+      tags$p(strong("Prediction: "), span(p$class, style="font-size:1.2em; text-transform:uppercase;"         )
       )
     )
   })
